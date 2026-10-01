@@ -20,10 +20,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+- name: Install the pinned toolchain
+        # rustup reads rust-toolchain.toml on its own, so the version CI tests
+        # is the version contributors get. dtolnay/rust-toolchain is not used
+        # here because it selects its version from the @rev rather than from
+        # the toolchain file, which would silently ignore the pin.
+        run: |
+          rustup show active-toolchain
+          cargo --version
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -46,10 +50,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+- name: Install the pinned toolchain
+        # rustup reads rust-toolchain.toml on its own, so the version CI tests
+        # is the version contributors get. dtolnay/rust-toolchain is not used
+        # here because it selects its version from the @rev rather than from
+        # the toolchain file, which would silently ignore the pin.
+        run: |
+          rustup show active-toolchain
+          cargo --version
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -151,10 +159,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          components: clippy, rustfmt
+      - name: Install the pinned toolchain
+        # rustup reads rust-toolchain.toml on its own, so the version CI tests
+        # is the version contributors get. dtolnay/rust-toolchain is not used
+        # here because it selects its version from the @rev rather than from
+        # the toolchain file, which would silently ignore the pin.
+        run: |
+          rustup show active-toolchain
+          cargo --version
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -219,10 +231,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          targets: ${{ matrix.target }}
+      - name: Add the matrix target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
