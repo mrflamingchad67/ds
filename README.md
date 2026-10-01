@@ -31,30 +31,33 @@ with one `stat`.
 | Drive enumeration | `GetLogicalDrives` | `/proc/mounts`, falling back to conventional roots |
 | Volume capacity | `GetDiskFreeSpaceExW` | `statvfs` (`f_blocks` / `f_bavail`) |
 | Filesystem scan | `std::fs::read_dir` | `std::fs::read_dir` |
-| Verification | **built, 214 tests run, benchmarked on real drives** | **compiles and clippy-clean; never executed** |
+| Verification | built, 216 tests run, benchmarked on real drives | **built and 216 tests run in CI** |
 
 The scanner itself is platform-agnostic — it only uses `std::fs`. The difference
 is the small `disk::platform` module, which answers "which volumes exist and how
-much room is on them".
+much room is on them". Both backends are exercised by CI on every push.
 
-### How this was found
+### Bugs this caught
 
 The Unix backend was written alongside the Windows one but never compiled,
-because only the host target was ever installed. Adding the Linux target exposed
-two compile errors immediately, and the first CI run then found two more bugs
-that Windows had hidden:
+because only the host target was ever installed. Adding CI found five problems
+that Windows alone could not see:
 
-* `scan_target` and `volume_root` trimmed `\` as a separator. On Unix a
+* `scan_target` and `volume_root` trimmed `\` as a trailing separator. On Unix a
   backslash is a legal character in a file name, so trailing-backslash trimming
-  corrupted paths. Drive-letter handling is now `cfg(windows)`.
-* The aggregator tests hard-coded `C:\…` fixtures. On Unix `C:\` is a single
-  path component with no parent, which silently disabled the ancestor walk-up
-  those tests exist to verify. They now use a relative root that has a real
-  parent everywhere.
+  would corrupt paths. Drive-letter handling is now `cfg(windows)`, since `C:` is
+  an ordinary relative file name there.
+* Drive-letter expansion is now split in two: a bare `C` or `C:` is the volume
+  root for both callers, while `C:\...` only collapses for volume capacity. That
+  distinction is what keeps `ds C:\Users` a subdirectory scan.
+* Three test fixtures used `C:\…` or `"Games\Steam"` paths. On Unix those are
+  single components with no children, which silently disabled the ancestor
+  roll-up the tests exist to verify.
+* One test asserted that `/` was a pseudo-filesystem. It is not — it is the real
+  root filesystem.
 
-Neither was visible from Windows alone. **Linux support should be considered
-verified only once the CI run is green** — it has still never been executed
-locally, since no WSL or Linux host was available.
+Every one of these was invisible from Windows. Treat this as the argument for
+running CI on more than the host platform.
 
 ## Usage
 
@@ -214,16 +217,18 @@ up to the scan root, so parents include descendants without a second pass.
 ## Development
 
 ```sh
-cargo test                  # 214 tests (Windows); the 7 Unix ones need Linux
+cargo test                  # 216 tests (214 on Windows, plus the Unix-gated ones)
 cargo clippy --all-targets  # clean on both Windows and Linux targets
 cargo fmt --check
 cargo build --release       # ~0.75 MB stripped binary
 ```
 
 CI (`.github/workflows/ci.yml`) runs format, clippy, tests, and a release build
-on Linux and Windows, smoke-tests the Windows binary against real drives, and
-cross-checks Linux/Windows/macOS targets. The Linux job is what proves the Unix
-backend works rather than merely compiling.
+on Linux and Windows, smoke-tests the Windows binary against real drives
+(volume listing, a live scan, JSON parsed with `ConvertFrom-Json`, and worker-count
+rejection), and cross-checks the Linux, Windows, and macOS targets with
+`--all-targets`. The Linux job is what proves the Unix backend works rather than
+merely compiling.
 
 Tests use scratch directories under the system temp path and remove them first,
 so repeat runs are deterministic. They never drive the real terminal.
