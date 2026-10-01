@@ -522,6 +522,8 @@ mod tests {
         assert_eq!(usage(0, 0).usage_percent(), 0.0);
     }
 
+    /// Windows-specific: drive-letter expansion has no meaning elsewhere.
+    #[cfg(windows)]
     #[test]
     fn volume_root_expands_bare_drive_letter() {
         assert_eq!(volume_root(Path::new("C:")), PathBuf::from("C:\\"));
@@ -529,12 +531,16 @@ mod tests {
         assert_eq!(volume_root(Path::new("d")), PathBuf::from("D:\\"));
     }
 
+    /// Windows-specific: drive-letter expansion has no meaning elsewhere.
+    #[cfg(windows)]
     #[test]
     fn volume_root_reduces_drive_path_to_its_root() {
         assert_eq!(volume_root(Path::new("C:\\Users")), PathBuf::from("C:\\"));
         assert_eq!(volume_root(Path::new("C:/Users/me")), PathBuf::from("C:\\"));
     }
 
+    /// Windows-specific: drive-letter expansion has no meaning elsewhere.
+    #[cfg(windows)]
     #[test]
     fn volume_root_strips_trailing_separator() {
         assert_eq!(volume_root(Path::new("D:\\")), PathBuf::from("D:\\"));
@@ -558,6 +564,8 @@ mod tests {
         assert_eq!(volume_root(Path::new("")), PathBuf::from("/"));
     }
 
+    /// Windows-specific: drive-letter expansion has no meaning elsewhere.
+    #[cfg(windows)]
     #[test]
     fn scan_target_expands_a_bare_drive_letter() {
         assert_eq!(scan_target(Path::new("C:")), PathBuf::from("C:\\"));
@@ -565,6 +573,8 @@ mod tests {
         assert_eq!(scan_target(Path::new("D:\\")), PathBuf::from("D:\\"));
     }
 
+    /// Windows-specific: drive-letter expansion has no meaning elsewhere.
+    #[cfg(windows)]
     #[test]
     fn scan_target_keeps_subdirectories() {
         // The whole point of this function: a scan must walk exactly the
@@ -597,6 +607,8 @@ mod tests {
         assert_eq!(scan_target(Path::new("")), PathBuf::from("/"));
     }
 
+    /// Windows-specific: drive-letter expansion has no meaning elsewhere.
+    #[cfg(windows)]
     #[test]
     fn scan_target_and_volume_root_differ_for_subdirectories() {
         let sub = Path::new("C:\\Users\\me");

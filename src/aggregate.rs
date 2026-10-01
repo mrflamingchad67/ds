@@ -548,8 +548,8 @@ mod tests {
         let mut agg = Aggregator::new(root(), 4, 4);
         agg.add_reports(&[
             report("Games", 0, 0, 2),
-            report("Games\\Steam", 30_000, 3, 0),
-            report("Games\\Minecraft", 2_500, 2, 0),
+            report("Games/Steam", 30_000, 3, 0),
+            report("Games/Minecraft", 2_500, 2, 0),
         ]);
 
         let games = agg.dir_totals(&dir("Games")).unwrap();
@@ -557,7 +557,7 @@ mod tests {
         assert_eq!(games.files, 5);
         assert_eq!(games.subdirs, 2);
 
-        let steam = agg.dir_totals(&dir("Games\\Steam")).unwrap();
+        let steam = agg.dir_totals(&dir("Games/Steam")).unwrap();
         assert_eq!(steam.bytes, 30_000);
 
         let root = agg.dir_totals(&root()).unwrap();
@@ -574,15 +574,15 @@ mod tests {
         let mut agg = Aggregator::new(root(), 4, 4);
         agg.add_reports(&[
             report("Games", 0, 0, 2),
-            report("Games\\Minecraft", 500 * mb, 1, 1),
-            report("Games\\Minecraft\\assets", 2 * gb, 4, 0),
-            report("Games\\Steam", 30 * gb, 20, 0),
+            report("Games/Minecraft", 500 * mb, 1, 1),
+            report("Games/Minecraft/assets", 2 * gb, 4, 0),
+            report("Games/Steam", 30 * gb, 20, 0),
         ]);
 
-        let mc = agg.dir_totals(&dir("Games\\Minecraft")).unwrap();
+        let mc = agg.dir_totals(&dir("Games/Minecraft")).unwrap();
         assert_eq!(mc.bytes, 500 * mb + 2 * gb);
 
-        let steam = agg.dir_totals(&dir("Games\\Steam")).unwrap();
+        let steam = agg.dir_totals(&dir("Games/Steam")).unwrap();
         assert_eq!(steam.bytes, 30 * gb);
 
         let games = agg.dir_totals(&dir("Games")).unwrap();
@@ -593,10 +593,10 @@ mod tests {
     fn batches_accumulate_like_single_reports() {
         let mut batched = Aggregator::new(root(), 4, 4);
         batched.add_reports(&[report("a", 10, 1, 1)]);
-        batched.add_reports(&[report("a\\b", 20, 2, 0)]);
+        batched.add_reports(&[report("a/b", 20, 2, 0)]);
 
         let mut single = Aggregator::new(root(), 4, 4);
-        single.add_reports(&[report("a", 10, 1, 1), report("a\\b", 20, 2, 0)]);
+        single.add_reports(&[report("a", 10, 1, 1), report("a/b", 20, 2, 0)]);
 
         assert_eq!(batched.bytes(), single.bytes());
         assert_eq!(batched.files(), single.files());
@@ -717,7 +717,7 @@ mod tests {
     fn tracked_directories_grows_with_directories_not_files() {
         let mut agg = Aggregator::new(root(), 4, 4);
         agg.add_reports(&[report("a", 0, 0, 1)]);
-        agg.add_reports(&[report("a\\b", 0, 0, 1)]);
+        agg.add_reports(&[report("a/b", 0, 0, 1)]);
         // 10,000 files in one directory must not add 10,000 map entries.
         agg.add_files(&[(1, PathBuf::from("f"))]);
 
