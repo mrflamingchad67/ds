@@ -260,3 +260,11 @@ so repeat runs are deterministic. They never drive the real terminal.
 `clap`, `tabled`, `crossterm`, `serde`/`serde_json`, plus `windows-sys` (or
 `libc` on Unix) for volume capacity. No async runtime, no TUI framework, no
 scanner dependencies.
+
+The compiler is pinned to Rust 1.98.1 in `rust-toolchain.toml`, so a local build
+matches CI exactly. Bump that file to move versions, and let CI confirm the new
+one.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

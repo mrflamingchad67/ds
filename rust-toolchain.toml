@@ -1,0 +1,14 @@
+# Pinned so that a build here behaves exactly like a build in CI. Without this,
+# a newer stable release could pass CI and fail on your machine, or worse, fail
+# in CI after passing locally.
+#
+# Bump deliberately: change this file, then let CI confirm the new version.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "aarch64-apple-darwin",
+]
+profile = "minimal"
