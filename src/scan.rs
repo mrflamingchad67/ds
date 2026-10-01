@@ -1119,21 +1119,31 @@ mod tests {
 
     #[test]
     fn depth_gate_limits_how_deep_the_walk_goes() {
-        let root = Path::new("C:\\root");
+        // Built with `join` rather than written as "C:\root\a", which on Unix
+        // would be one path component with no children and would make
+        // `strip_prefix` fail, silently allowing everything.
+        let root = Path::new("root");
+        let at = |depth: usize| {
+            let mut path = root.to_path_buf();
+            for level in 0..depth {
+                path.push(format!("level{level}"));
+            }
+            path
+        };
 
         // --depth 1 reads the root's own files only, so no child is followed.
-        assert!(!within_depth(root, Path::new("C:\\root\\a"), 1));
-        assert!(!within_depth(root, Path::new("C:\\root\\a\\b"), 1));
+        assert!(!within_depth(root, &at(1), 1));
+        assert!(!within_depth(root, &at(2), 1));
 
         // --depth 2 follows one level of subdirectories.
-        assert!(within_depth(root, Path::new("C:\\root\\a"), 2));
-        assert!(!within_depth(root, Path::new("C:\\root\\a\\b"), 2));
+        assert!(within_depth(root, &at(1), 2));
+        assert!(!within_depth(root, &at(2), 2));
 
         // Zero means unlimited, whatever the depth.
-        assert!(within_depth(root, Path::new("C:\\root\\a\\b\\c\\d"), 0));
+        assert!(within_depth(root, &at(4), 0));
 
         // A path outside the root is allowed rather than silently dropped.
-        assert!(within_depth(root, Path::new("D:\\elsewhere\\deep"), 1));
+        assert!(within_depth(root, Path::new("elsewhere/deep"), 1));
     }
 
     #[test]

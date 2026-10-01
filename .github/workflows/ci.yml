@@ -81,12 +81,24 @@ jobs:
       - name: Smoke test filesystem scan
         shell: pwsh
         run: |
-          # Scan the checkout itself: a real, deep-ish tree with known contents.
+          # Scan the checkout itself and check the summary is well formed.
           $text = (& .\target\release\ds.exe . --plain --ascii --quiet --largest 3 | Out-String)
           if ($LASTEXITCODE -ne 0) { throw "ds exited with $LASTEXITCODE" }
           if ($text -notmatch 'Scanned') { throw "expected a scan summary, got: $text" }
-          if ($text -notmatch 'src') { throw "expected src to be reported, got: $text" }
-          if ($text -notmatch 'Cargo\.toml') { throw "expected Cargo.toml to be reported" }
+          if ($text -notmatch '\d+ files') { throw "expected a file count, got: $text" }
+          if ($text -notmatch '\d+ directories') { throw "expected a directory count" }
+          if ($text -notmatch 'Path') { throw "expected the directory table header" }
+          Write-Host $text
+
+      - name: Smoke test scan of a known directory
+        shell: pwsh
+        run: |
+          # src/ is small and its contents are known, so the report is stable.
+          # --largest must exceed the file count so every source file appears.
+          $text = (& .\target\release\ds.exe src --plain --ascii --quiet --largest 50 | Out-String)
+          if ($LASTEXITCODE -ne 0) { throw "ds exited with $LASTEXITCODE" }
+          if ($text -notmatch 'main\.rs') { throw "expected main.rs in the report, got: $text" }
+          if ($text -notmatch 'scan\.rs') { throw "expected scan.rs in the report" }
           Write-Host $text
 
       - name: Smoke test JSON output parses

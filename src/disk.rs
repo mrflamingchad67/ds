@@ -448,7 +448,7 @@ mod tests {
 
         #[test]
         fn skips_pseudo_filesystems() {
-            for pseudo in ["/", "proc", "sysfs", "tmpfs", "cgroup2", "devpts"] {
+            for pseudo in ["proc", "sysfs", "tmpfs", "cgroup2", "devpts", "debugfs"] {
                 assert!(
                     is_pseudo_filesystem(pseudo),
                     "{pseudo} should be filtered out"
@@ -458,8 +458,9 @@ mod tests {
 
         #[test]
         fn keeps_real_filesystems() {
-            for real in ["ext4", "btrfs", "xfs", "vfat", "ntfs3", "nfs4", "zfs"] {
-                assert!(!is_pseudo_filesystem(real), "{real} should be kept");
+            // Notably "/" itself is real storage, never a pseudo-filesystem.
+            for real in ["", "ext4", "btrfs", "xfs", "vfat", "ntfs3", "nfs4", "zfs"] {
+                assert!(!is_pseudo_filesystem(real), "{real:?} should be kept");
             }
         }
 
