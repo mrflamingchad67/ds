@@ -1,0 +1,19 @@
+# Rust build output
+/target
+**/*.rs.bk
+
+# Compiled binaries, in case one is built outside target/
+*.exe
+*.dll
+*.pdb
+
+# Local scratch output from benchmarks and manual runs
+*.out
+*.err
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

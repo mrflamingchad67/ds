@@ -1,0 +1,15 @@
+# Normalize line endings in the repository to LF, and check them out as LF on
+# every platform, so Windows contributors don't produce whole-file diffs.
+* text=auto eol=lf
+
+# Windows scripts genuinely need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets must never be touched.
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.dll binary
