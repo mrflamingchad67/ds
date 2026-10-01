@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-- name: Install the pinned toolchain
+      - name: Install the pinned toolchain
         # rustup reads rust-toolchain.toml on its own, so the version CI tests
         # is the version contributors get. dtolnay/rust-toolchain is not used
         # here because it selects its version from the @rev rather than from
@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-- name: Install the pinned toolchain
+      - name: Install the pinned toolchain
         # rustup reads rust-toolchain.toml on its own, so the version CI tests
         # is the version contributors get. dtolnay/rust-toolchain is not used
         # here because it selects its version from the @rev rather than from
