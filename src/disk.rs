@@ -276,13 +276,20 @@ mod platform {
     use super::*;
     use std::os::unix::ffi::OsStrExt;
 
-    /// Query filesystem capacity for a mount point.
+    /// Total and available bytes for a mount point.
+    ///
+    /// The two Unix dialects disagree on both the call and the field holding
+    /// the fragment size, so each variant is compiled separately. Reading the
+    /// wrong struct's fields would silently produce nonsense numbers rather
+    /// than failing, which is why this is not shared behind a cfg inside one
+    /// function body.
+    #[cfg(not(target_os = "macos"))]
     pub fn usage(root: &Path) -> Result<DiskUsage, String> {
         let c_path = std::ffi::CString::new(root.as_os_str().as_bytes())
             .map_err(|_| "path contains an interior nul byte".to_string())?;
 
         // SAFETY: `c_path` is a valid NUL-terminated string that outlives the
-        // call, and `stat` is fully initialised on success.
+        // call, and `statvfs` is fully initialised on success.
         let stat = unsafe {
             let mut stat: libc::statvfs = std::mem::zeroed();
             if libc::statvfs(c_path.as_ptr(), &mut stat) != 0 {
@@ -293,11 +300,40 @@ mod platform {
 
         // `f_frsize` is the fragment size the block counts are expressed in.
         // `f_bavail` is what an unprivileged user may actually use, which is
-        // the figure DS reports so the two platforms agree on what "free" means.
+        // the figure DS reports so both platforms agree on what "free" means.
         let fragment = stat.f_frsize as u64;
         Ok(DiskUsage {
             total: (stat.f_blocks as u64).saturating_mul(fragment),
             available: (stat.f_bavail as u64).saturating_mul(fragment),
+        })
+    }
+
+    /// Total and available bytes for a mount point on macOS.
+    ///
+    /// macOS has `statfs` rather than `statvfs`, and carries the fragment size
+    /// in `f_bsize`.
+    ///
+    /// Note that APFS volumes sharing a container all report that container's
+    /// totals, so two volumes in one container legitimately show identical
+    /// figures. That is the filesystem's behaviour, not a rounding artefact.
+    #[cfg(target_os = "macos")]
+    pub fn usage(root: &Path) -> Result<DiskUsage, String> {
+        let c_path = std::ffi::CString::new(root.as_os_str().as_bytes())
+            .map_err(|_| "path contains an interior nul byte".to_string())?;
+
+        // SAFETY: as for the statvfs variant above.
+        let stat = unsafe {
+            let mut stat: libc::statfs = std::mem::zeroed();
+            if libc::statfs(c_path.as_ptr(), &mut stat) != 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            stat
+        };
+
+        let fragment = stat.f_bsize as u64;
+        Ok(DiskUsage {
+            total: stat.f_blocks.saturating_mul(fragment),
+            available: stat.f_bavail.saturating_mul(fragment),
         })
     }
 
@@ -316,14 +352,14 @@ mod platform {
             .collect()
     }
 
-    /// Mount points from `/proc/mounts` where available, otherwise the
+    /// Mount points from the platform's own facility, otherwise the
     /// conventional locations.
     pub(crate) fn candidates() -> Vec<PathBuf> {
         let mut roots = mount_points().unwrap_or_default();
 
         if roots.is_empty() {
-            // No procfs: guess the usual roots and let `usage` discard whatever
-            // turns out not to be a real mount point.
+            // Nothing enumerable: guess the usual roots and let `usage` discard
+            // whatever turns out not to be a real mount point.
             roots = ["/", "/home", "/mnt", "/media", "/run/media"]
                 .iter()
                 .map(PathBuf::from)
@@ -335,10 +371,11 @@ mod platform {
         roots
     }
 
-    /// Distinct real mount points from `/proc/mounts`.
+    /// Distinct real mount points, from `/proc/mounts`.
     ///
     /// Pseudo-filesystems are skipped: reporting `proc` or `sysfs` as a drive is
     /// noise rather than information.
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn mount_points() -> Option<Vec<PathBuf>> {
         let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
         let mut roots = Vec::new();
@@ -362,7 +399,68 @@ mod platform {
         Some(roots)
     }
 
+    /// Distinct real mount points, from `getmntinfo`.
+    ///
+    /// macOS has no procfs, so reading `/proc/mounts` there would find nothing
+    /// and DS would report only `/`, hiding every external disk. The kernel's
+    /// mount table is queried directly instead.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn mount_points() -> Option<Vec<PathBuf>> {
+        // SAFETY: `getmntinfo` stores a pointer to a system-allocated table of
+        // exactly `count` entries. The pointer and length are used only here,
+        // before the table is released when the process exits.
+        unsafe {
+            let mut buffer: *mut libc::statfs = std::ptr::null_mut();
+            let count = libc::getmntinfo(&mut buffer, libc::MNT_NOWAIT);
+
+            if count <= 0 || buffer.is_null() {
+                return None;
+            }
+
+            let entries = std::slice::from_raw_parts(buffer, count as usize);
+            let mut roots = Vec::new();
+
+            for entry in entries {
+                // Filtered by filesystem type, not path prefix: macOS has no
+                // /proc and its pseudo-filesystems live under /dev and /System.
+                if is_pseudo_filesystem(&fixed_string(&entry.f_fstypename)) {
+                    continue;
+                }
+
+                let name = fixed_string(&entry.f_mntonname);
+                if name.is_empty() {
+                    continue;
+                }
+
+                let root = PathBuf::from(name);
+                if !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+
+            Some(roots)
+        }
+    }
+
+    /// Decode a fixed-size C string field into an owned `String`.
+    ///
+    /// # Safety
+    ///
+    /// `field` must be a NUL-terminated byte array, as the `statfs` name and
+    /// filesystem-type fields are.
+    #[cfg(target_os = "macos")]
+    unsafe fn fixed_string(field: &[libc::c_char]) -> String {
+        let bytes: Vec<u8> = field
+            .iter()
+            .take_while(|&&ch| ch != 0)
+            .map(|&ch| ch as u8)
+            .collect();
+
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
     /// Mount types that are not real storage.
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn is_pseudo_filesystem(mount: &str) -> bool {
         const PSEUDO: [&str; 11] = [
             "proc",
@@ -380,8 +478,19 @@ mod platform {
         PSEUDO.contains(&mount)
     }
 
+    /// Filesystem types that are not real storage on macOS.
+    ///
+    /// Filtered by type rather than by path, because macOS mount points carry
+    /// no indication of pseudo-ness in their name.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn is_pseudo_filesystem(filesystem: &str) -> bool {
+        const PSEUDO: [&str; 4] = ["devfs", "autofs", "procfs", "nullfs"];
+        PSEUDO.contains(&filesystem)
+    }
+
     /// Decode the octal escapes the kernel writes into `/proc/mounts`, such as
     /// `/mnt/my\x20disk` for a directory whose name contains a space.
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn unescape_mount_point(mount: &str) -> String {
         let bytes = mount.as_bytes();
         let mut out = String::with_capacity(mount.len());
@@ -426,6 +535,51 @@ mod tests {
         use std::path::Path;
 
         #[test]
+        fn reads_the_system_root() {
+            let usage = usage(Path::new("/")).expect("querying / should succeed");
+            assert!(usage.total > 0, "root must have capacity");
+            assert!(usage.available <= usage.total);
+        }
+
+        #[test]
+        fn reports_each_mount_point_once() {
+            let drives = list_drives();
+            assert!(!drives.is_empty(), "expected at least one mount point");
+
+            let names: Vec<&str> = drives.iter().map(|d| d.name.as_str()).collect();
+            let mut unique = names.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(names.len(), unique.len(), "mount points must be unique");
+
+            for drive in &drives {
+                assert!(drive.usage.total > 0, "{} reported no capacity", drive.name);
+            }
+        }
+
+        #[test]
+        fn includes_the_root_mount_point() {
+            let drives = list_drives();
+            assert!(
+                drives.iter().any(|drive| drive.path == Path::new("/")),
+                "the root filesystem must be reported: {:?}",
+                drives.iter().map(|d| &d.name).collect::<Vec<_>>()
+            );
+        }
+
+        #[test]
+        fn a_missing_mount_point_reports_an_error() {
+            assert!(usage(Path::new("/definitely-not-a-mount")).is_err());
+        }
+    }
+
+    /// `/proc/mounts` parsing, which only exists on Linux and other procfs
+    /// systems.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    mod procfs {
+        use super::platform::*;
+
+        #[test]
         fn unescapes_octal_sequences_in_mount_points() {
             // The kernel escapes spaces and other specials in /proc/mounts.
             assert_eq!(unescape_mount_point("/mnt/my\\040disk"), "/mnt/my disk");
@@ -465,26 +619,70 @@ mod tests {
         }
 
         #[test]
-        fn reads_the_system_root() {
-            let usage = usage(Path::new("/")).expect("statvfs on / should succeed");
-            assert!(usage.total > 0, "root must have capacity");
-            assert!(usage.available <= usage.total);
-        }
-
-        #[test]
-        fn reports_the_real_root_only_once() {
-            let drives = list_drives();
-            assert!(!drives.is_empty(), "expected at least one mount point");
-
-            let names: Vec<&str> = drives.iter().map(|d| d.name.as_str()).collect();
-            let mut unique = names.clone();
-            unique.sort_unstable();
-            unique.dedup();
-            assert_eq!(names.len(), unique.len(), "mount points must be unique");
-
+        fn never_reports_proc_as_a_drive() {
+            let names: Vec<String> = list_drives().into_iter().map(|drive| drive.name).collect();
             assert!(
                 !names.iter().any(|name| name.contains("proc")),
                 "proc must not be reported as a drive: {names:?}"
+            );
+        }
+    }
+
+    /// macOS mount discovery and the `statfs` variant.
+    #[cfg(target_os = "macos")]
+    mod macos {
+        use super::platform::*;
+        use std::path::Path;
+
+        #[test]
+        fn skips_pseudo_filesystems_by_type() {
+            for pseudo in ["devfs", "autofs", "procfs", "nullfs"] {
+                assert!(
+                    is_pseudo_filesystem(pseudo),
+                    "{pseudo} should be filtered out"
+                );
+            }
+        }
+
+        #[test]
+        fn keeps_real_filesystems() {
+            for real in ["apfs", "hfs", "msdos", "exfat", "ntfs", "smbfs", ""] {
+                assert!(!is_pseudo_filesystem(real), "{real:?} should be kept");
+            }
+        }
+
+        #[test]
+        fn reads_the_system_root() {
+            let usage = usage(Path::new("/")).expect("statfs on / should succeed");
+            assert!(usage.total > 0);
+        }
+
+        /// The regression this backend exists to prevent: macOS has no
+        /// procfs, so a `/proc/mounts`-only implementation reports just `/`
+        /// and hides every external disk.
+        #[test]
+        fn finds_more_than_the_root_mount_point() {
+            let drives = list_drives();
+            assert!(
+                drives.len() > 1,
+                "expected several mount points on macOS, got {:?}",
+                drives.iter().map(|d| &d.name).collect::<Vec<_>>()
+            );
+        }
+
+        #[test]
+        fn reads_mount_points_without_procfs() {
+            let roots = mount_points().expect("getmntinfo should enumerate mounts");
+            assert!(!roots.is_empty());
+            assert!(roots.iter().any(|root| root == Path::new("/")));
+        }
+
+        #[test]
+        fn never_reports_devfs_as_a_drive() {
+            let names: Vec<String> = list_drives().into_iter().map(|d| d.name).collect();
+            assert!(
+                !names.iter().any(|name| name.starts_with("/dev")),
+                "devfs must not be reported as a drive: {names:?}"
             );
         }
 

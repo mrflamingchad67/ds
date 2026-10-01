@@ -142,14 +142,80 @@ jobs:
           Write-Host 'unreasonable worker counts correctly rejected'
           exit 0
 
-  # Proves the two targets stay cross-compilable, which catches accidental
-  # platform-specific code leaking into shared modules.
+# macOS needs a real runner, not just a cross-compile check: the backend
+  # calls getmntinfo and statfs, neither of which can be exercised by
+  # type-checking for a foreign target.
+  macos:
+    name: macos (stable)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test -- --nocapture
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Smoke test volume listing
+        # The regression this backend exists to prevent: with no procfs, a
+        # /proc/mounts-only implementation reports just "/" and hides every
+        # external disk.
+        run: |
+          text="$(./target/release/ds --plain --ascii)"
+          echo "$text"
+          case "$text" in
+            *Drive*) ;;
+            *) echo "expected the drive table"; exit 1 ;;
+          esac
+          rows=$(printf '%s\n' "$text" | grep -c '^| ')
+          if [ "$rows" -lt 2 ]; then
+            echo "expected at least one drive row plus the header, got $rows"
+            exit 1
+          fi
+
+      - name: Smoke test filesystem scan
+        run: |
+          text="$(./target/release/ds /tmp --plain --ascii --quiet --largest 5)"
+          echo "$text"
+          case "$text" in
+            *Scanned*) ;;
+            *) echo "expected a scan summary"; exit 1 ;;
+          esac
+
+      - name: Smoke test JSON output parses
+        run: |
+          ./target/release/ds /tmp --json --largest 3 | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)
+          assert data["files"] >= 0, data
+          assert data["threads"] > 0, data
+          assert isinstance(data["largest_files"], list), data
+          print("files=%s threads=%s" % (data["files"], data["threads"]))
+          '
+
+  # Proves the targets stay cross-compilable, which catches platform-specific
+  # code leaking into shared modules.
   cross:
     name: cross-compile check
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [x86_64-unknown-linux-gnu, x86_64-pc-windows-gnu, aarch64-apple-darwin]
+        target: [x86_64-unknown-linux-gnu, x86_64-pc-windows-gnu, aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
       - uses: actions/checkout@v4
 

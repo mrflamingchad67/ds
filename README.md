@@ -26,27 +26,48 @@ with one `stat`.
 
 ## Platform support
 
-| | Windows | Linux / macOS |
-| --- | --- | --- |
-| Drive enumeration | `GetLogicalDrives` | `/proc/mounts`, falling back to conventional roots |
-| Volume capacity | `GetDiskFreeSpaceExW` | `statvfs` (`f_blocks` / `f_bavail`) |
-| Filesystem scan | `std::fs::read_dir` | `std::fs::read_dir` |
-| Verification | built, 216 tests run, benchmarked on real drives | **built and 216 tests run in CI** |
+| | Windows | Linux | macOS |
+| --- | --- | --- | --- |
+| Drive enumeration | `GetLogicalDrives` | `/proc/mounts` | `getmntinfo` |
+| Volume capacity | `GetDiskFreeSpaceExW` | `statvfs` (`f_frsize`) | `statfs` (`f_bsize`) |
+| Filesystem scan | `std::fs::read_dir` | `std::fs::read_dir` | `std::fs::read_dir` |
+| Verified by | CI + local benchmarks | CI | CI |
 
-The scanner itself is platform-agnostic — it only uses `std::fs`. The difference
-is the small `disk::platform` module, which answers "which volumes exist and how
-much room is on them". Both backends are exercised by CI on every push.
+The scanner is platform-agnostic — it only uses `std::fs`. Everything
+platform-specific sits in `disk::platform`, which answers "which volumes exist
+and how much room is on them". The three dialects genuinely differ:
 
-### Bugs this caught
+- **Linux** reads `/proc/mounts`, skipping pseudo-filesystems by mount type and
+  decoding the octal escapes the kernel writes.
+- **macOS** has no procfs, so it queries the kernel mount table via
+  `getmntinfo` and filters by filesystem type (`devfs`, `autofs`) rather than by
+  path. It also uses `statfs`, which carries the fragment size in `f_bsize`
+  rather than `f_frsize`.
+- **Windows** uses drive letters and reparse-point-aware enumeration.
 
-The Unix backend was written alongside the Windows one but never compiled,
-because only the host target was ever installed. Adding CI found five problems
-that Windows alone could not see:
+### "It's Unix, so macOS is the same"
+
+Not quite, and the difference is the whole feature. A `/proc/mounts`-only Unix
+backend compiles cleanly on macOS and passes a cross-compile check while being
+completely broken there: the file does not exist, so discovery silently falls
+back to a hardcoded guess list and `ds` reports a single row for `/`, hiding
+every external disk, every APFS volume, and every network mount. CI now runs a
+real `macos-latest` job specifically to catch that, including a test asserting
+that more than one mount point is found.
+
+One genuine macOS quirk worth knowing: APFS volumes in a shared container all
+report that container's totals, so `/` and `/System/Volumes/Data` legitimately
+show identical figures. That is the filesystem's behaviour, and DS reports it
+rather than faking a difference.
+
+### Bugs this process caught
+
+Adding CI found seven problems that Windows alone could not see:
 
 * `scan_target` and `volume_root` trimmed `\` as a trailing separator. On Unix a
   backslash is a legal character in a file name, so trailing-backslash trimming
   would corrupt paths. Drive-letter handling is now `cfg(windows)`, since `C:` is
-  an ordinary relative file name there.
+  an ordinary relative file name elsewhere.
 * Drive-letter expansion is now split in two: a bare `C` or `C:` is the volume
   root for both callers, while `C:\...` only collapses for volume capacity. That
   distinction is what keeps `ds C:\Users` a subdirectory scan.
@@ -55,9 +76,10 @@ that Windows alone could not see:
   roll-up the tests exist to verify.
 * One test asserted that `/` was a pseudo-filesystem. It is not — it is the real
   root filesystem.
+* The Unix backend had never been compiled and had two errors in it.
 
-Every one of these was invisible from Windows. Treat this as the argument for
-running CI on more than the host platform.
+Treat this as the argument for running CI on every platform you claim to
+support, rather than cross-compiling and assuming.
 
 ## Usage
 
