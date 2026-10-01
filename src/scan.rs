@@ -979,13 +979,19 @@ mod tests {
 
     #[test]
     fn a_deep_tree_does_not_exhaust_the_stack() {
+        // 100 levels of single-character names stays around 200 bytes, well
+        // inside macOS's 1024-byte PATH_MAX. A deeper tree here fails to be
+        // created on macOS for reasons that have nothing to do with the
+        // scanner.
+        const DEPTH: usize = 100;
+
         let root = scratch("deep");
         let mut path = root.clone();
-        for i in 0..200 {
-            path = path.join(format!("level{i}"));
+        for level in 0..DEPTH {
+            path = path.join(format!("d{level}"));
         }
-        fs::create_dir_all(&path).unwrap();
-        fs::write(path.join("deep.txt"), vec![0u8; 7]).unwrap();
+        fs::create_dir_all(&path).expect("deep tree should be creatable");
+        fs::write(path.join("deep.txt"), vec![0u8; 7]).expect("file should be writable");
 
         // A tiny queue forces the inline path, which must stay iterative.
         let opts = ScanOptions {
@@ -995,7 +1001,11 @@ mod tests {
         let mut scanner = Scanner::new(opts);
         let outcome = scanner.scan(&root).expect("deep scan should succeed");
         assert_eq!(outcome.files, 1);
-        assert_eq!(outcome.directories, 201);
+        assert_eq!(
+            outcome.directories,
+            DEPTH as u64 + 1,
+            "root plus every level"
+        );
     }
 
     #[test]
