@@ -24,6 +24,26 @@ DS never shells out to `du`, `fsutil`, `wmic`, `dir`, WizTree, TreeSize, or any
 other disk analyzer, and it never reads file contents. A 20 GB ISO is measured
 with one `stat`.
 
+## Platform support
+
+| | Windows | Linux / macOS |
+| --- | --- | --- |
+| Drive enumeration | `GetLogicalDrives` | `/proc/mounts`, falling back to conventional roots |
+| Volume capacity | `GetDiskFreeSpaceExW` | `statvfs` (`f_blocks` / `f_bavail`) |
+| Filesystem scan | `std::fs::read_dir` | `std::fs::read_dir` |
+| Verification | **built, 214 tests run, benchmarked on real drives** | **compiles and clippy-clean; never executed** |
+
+The scanner itself is platform-agnostic — it only uses `std::fs`. The difference
+is the small `disk::platform` module, which answers "which volumes exist and how
+much room is on them".
+
+The Unix backend was written alongside the Windows one but was not built until a
+Linux target was added, at which point it turned out not to compile (a missing
+`OsStrExt` import and a malformed iterator helper). Both are fixed, and CI now
+runs the Unix tests on Linux. **Treat Linux support as unproven until that CI run
+goes green** — it has never been executed on a real Unix machine from here, as
+no WSL or Linux host was available.
+
 ## Usage
 
 ```
@@ -164,7 +184,7 @@ This is the case where `--threads` is irrelevant and the default is fine.
 | Module | Responsibility |
 | --- | --- |
 | `cli` | Clap definitions and derived settings |
-| `disk` | Drive enumeration, volume capacity, path normalisation |
+| `disk` | Drive enumeration, volume capacity, path normalisation (Win / Unix backends) |
 | `queue` | Bounded work queue with self-closing lifetime |
 | `scan` | Worker pool, traversal, metadata collection, cancellation |
 | `aggregate` | Directory rollups, extension totals, bounded top-N, merge |
@@ -182,11 +202,16 @@ up to the scan root, so parents include descendants without a second pass.
 ## Development
 
 ```sh
-cargo test                  # 195 unit tests
-cargo clippy --all-targets  # clean
+cargo test                  # 214 tests (Windows); the 7 Unix ones need Linux
+cargo clippy --all-targets  # clean on both Windows and Linux targets
 cargo fmt --check
-cargo build --release       # ~0.7 MB stripped binary
+cargo build --release       # ~0.75 MB stripped binary
 ```
+
+CI (`.github/workflows/ci.yml`) runs format, clippy, tests, and a release build
+on Linux and Windows, smoke-tests the Windows binary against real drives, and
+cross-checks Linux/Windows/macOS targets. The Linux job is what proves the Unix
+backend works rather than merely compiling.
 
 Tests use scratch directories under the system temp path and remove them first,
 so repeat runs are deterministic. They never drive the real terminal.

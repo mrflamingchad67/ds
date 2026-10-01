@@ -250,27 +250,34 @@ mod platform {
 #[cfg(unix)]
 mod platform {
     use super::*;
+    use std::os::unix::ffi::OsStrExt;
 
+    /// Query filesystem capacity for a mount point.
     pub fn usage(root: &Path) -> Result<DiskUsage, String> {
         let c_path = std::ffi::CString::new(root.as_os_str().as_bytes())
             .map_err(|_| "path contains an interior nul byte".to_string())?;
 
-        // SAFETY: `c_path` is a valid NUL-terminated string that outlives
-        // the call, and `stat` is fully initialised on success.
-        unsafe {
+        // SAFETY: `c_path` is a valid NUL-terminated string that outlives the
+        // call, and `stat` is fully initialised on success.
+        let stat = unsafe {
             let mut stat: libc::statvfs = std::mem::zeroed();
             if libc::statvfs(c_path.as_ptr(), &mut stat) != 0 {
                 return Err(std::io::Error::last_os_error().to_string());
             }
+            stat
+        };
 
-            let fragment = stat.f_frsize as u64;
-            let total = stat.f_blocks as u64 * fragment;
-            let available = stat.f_bavail as u64 * fragment;
-
-            Ok(DiskUsage { available, total })
-        }
+        // `f_frsize` is the fragment size the block counts are expressed in.
+        // `f_bavail` is what an unprivileged user may actually use, which is
+        // the figure DS reports so the two platforms agree on what "free" means.
+        let fragment = stat.f_frsize as u64;
+        Ok(DiskUsage {
+            total: (stat.f_blocks as u64).saturating_mul(fragment),
+            available: (stat.f_bavail as u64).saturating_mul(fragment),
+        })
     }
 
+    /// Every real mount point, labelled by its path.
     pub fn list_drives() -> Vec<Drive> {
         candidates()
             .into_iter()
@@ -285,48 +292,97 @@ mod platform {
             .collect()
     }
 
-    /// Read mount points from `/proc/mounts` where available, otherwise fall
-    /// back to well-known roots.
-    fn candidates() -> Vec<PathBuf> {
-        if let Ok(mounts) = std::fs::read_to_string("/proc/mounts") {
-            let mut roots: Vec<PathBuf> = Vec::new();
-            for line in mounts.lines() {
-                let Some((device, mount)) = line.split_whitespace().next_chunk::<2>() else {
-                    continue;
-                };
-                if !device.starts_with('/') {
-                    continue;
-                }
-                let root = PathBuf::from(mount);
-                if !roots.contains(&root) {
-                    roots.push(root);
-                }
+    /// Mount points from `/proc/mounts` where available, otherwise the
+    /// conventional locations.
+    pub(crate) fn candidates() -> Vec<PathBuf> {
+        let mut roots = mount_points().unwrap_or_default();
+
+        if roots.is_empty() {
+            // No procfs: guess the usual roots and let `usage` discard whatever
+            // turns out not to be a real mount point.
+            roots = ["/", "/home", "/mnt", "/media", "/run/media"]
+                .iter()
+                .map(PathBuf::from)
+                .collect();
+        }
+
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    /// Distinct real mount points from `/proc/mounts`.
+    ///
+    /// Pseudo-filesystems are skipped: reporting `proc` or `sysfs` as a drive is
+    /// noise rather than information.
+    pub(crate) fn mount_points() -> Option<Vec<PathBuf>> {
+        let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
+        let mut roots = Vec::new();
+
+        for line in mounts.lines() {
+            let mut fields = line.split_whitespace();
+            let (Some(device), Some(mount)) = (fields.next(), fields.next()) else {
+                continue;
+            };
+
+            if !device.starts_with('/') || is_pseudo_filesystem(mount) {
+                continue;
             }
-            if !roots.is_empty() {
-                roots.sort();
-                return roots;
+
+            let root = PathBuf::from(unescape_mount_point(mount));
+            if !roots.contains(&root) {
+                roots.push(root);
             }
         }
 
-        ["/", "/home", "/mnt", "/media", "/run/media"]
-            .iter()
-            .map(PathBuf::from)
-            .collect()
+        Some(roots)
     }
 
-    /// Split a whitespace-delimited pair, used by the `/proc/mounts` reader.
-    trait NextChunk: Iterator {
-        fn next_chunk<const N: usize>(self) -> Option<[Self::Item; N]>;
+    /// Mount types that are not real storage.
+    pub(crate) fn is_pseudo_filesystem(mount: &str) -> bool {
+        const PSEUDO: [&str; 11] = [
+            "proc",
+            "sysfs",
+            "devtmpfs",
+            "devpts",
+            "tmpfs",
+            "cgroup",
+            "cgroup2",
+            "securityfs",
+            "pstore",
+            "debugfs",
+            "tracefs",
+        ];
+        PSEUDO.contains(&mount)
     }
 
-    impl<I: Iterator> NextChunk for I {
-        fn next_chunk<const N: usize>(mut self) -> Option<[Self::Item; N]> {
-            let mut out = Vec::with_capacity(N);
-            for _ in 0..N {
-                out.push(self.next()?);
+    /// Decode the octal escapes the kernel writes into `/proc/mounts`, such as
+    /// `/mnt/my\x20disk` for a directory whose name contains a space.
+    pub(crate) fn unescape_mount_point(mount: &str) -> String {
+        let bytes = mount.as_bytes();
+        let mut out = String::with_capacity(mount.len());
+        let mut index = 0;
+
+        while index < bytes.len() {
+            let escaped = bytes[index] == b'\\'
+                && index + 3 < bytes.len()
+                && std::str::from_utf8(&bytes[index + 1..index + 4])
+                    .is_ok_and(|digits| u8::from_str_radix(digits, 8).is_ok());
+
+            if escaped {
+                let digits =
+                    std::str::from_utf8(&bytes[index + 1..index + 4]).expect("checked above");
+                let value = u8::from_str_radix(digits, 8).expect("checked above");
+                out.push(value as char);
+                index += 4;
+                continue;
             }
-            out.try_into().ok()
+
+            out.push(bytes[index] as char);
+            index += 1;
         }
+
+        out
     }
 }
 
@@ -338,6 +394,80 @@ pub fn list() -> Vec<Drive> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Unix-only helpers, tested wherever they can run.
+    #[cfg(unix)]
+    mod unix {
+        use super::platform::*;
+        use std::path::Path;
+
+        #[test]
+        fn unescapes_octal_sequences_in_mount_points() {
+            // The kernel escapes spaces and other specials in /proc/mounts.
+            assert_eq!(unescape_mount_point("/mnt/my\\040disk"), "/mnt/my disk");
+            assert_eq!(unescape_mount_point("/data\\011tab"), "/data\ttab");
+        }
+
+        #[test]
+        fn leaves_plain_mount_points_untouched() {
+            assert_eq!(unescape_mount_point("/"), "/");
+            assert_eq!(unescape_mount_point("/home/user"), "/home/user");
+            assert_eq!(unescape_mount_point("/mnt/disk"), "/mnt/disk");
+        }
+
+        #[test]
+        fn leaves_stray_backslashes_alone() {
+            assert_eq!(unescape_mount_point("/a\\b"), "/a\\b");
+            assert_eq!(unescape_mount_point("/trailing\\"), "/trailing\\");
+            assert_eq!(unescape_mount_point("/\\"), "/\\");
+        }
+
+        #[test]
+        fn skips_pseudo_filesystems() {
+            for pseudo in ["/", "proc", "sysfs", "tmpfs", "cgroup2", "devpts"] {
+                assert!(
+                    is_pseudo_filesystem(pseudo),
+                    "{pseudo} should be filtered out"
+                );
+            }
+        }
+
+        #[test]
+        fn keeps_real_filesystems() {
+            for real in ["ext4", "btrfs", "xfs", "vfat", "ntfs3", "nfs4", "zfs"] {
+                assert!(!is_pseudo_filesystem(real), "{real} should be kept");
+            }
+        }
+
+        #[test]
+        fn reads_the_system_root() {
+            let usage = usage(Path::new("/")).expect("statvfs on / should succeed");
+            assert!(usage.total > 0, "root must have capacity");
+            assert!(usage.available <= usage.total);
+        }
+
+        #[test]
+        fn reports_the_real_root_only_once() {
+            let drives = list_drives();
+            assert!(!drives.is_empty(), "expected at least one mount point");
+
+            let names: Vec<&str> = drives.iter().map(|d| d.name.as_str()).collect();
+            let mut unique = names.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(names.len(), unique.len(), "mount points must be unique");
+
+            assert!(
+                !names.iter().any(|name| name.contains("proc")),
+                "proc must not be reported as a drive: {names:?}"
+            );
+        }
+
+        #[test]
+        fn a_missing_mount_point_reports_an_error() {
+            assert!(usage(Path::new("/definitely-not-a-mount")).is_err());
+        }
+    }
 
     fn usage(total: u64, available: u64) -> DiskUsage {
         DiskUsage { available, total }

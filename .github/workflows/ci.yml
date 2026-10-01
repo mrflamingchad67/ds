@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Linux is where the `statvfs` and `/proc/mounts` code paths actually run, so
+  # it is the job that proves the non-Windows backend works rather than merely
+  # compiles.
+  linux:
+    name: linux (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test -- --nocapture
+
+      - name: Build release
+        run: cargo build --release
+
+  windows:
+    name: windows (stable)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test -- --nocapture
+
+      - name: Build release
+        run: cargo build --release
+
+      # A smoke test that the real Windows code paths execute: drive
+      # enumeration, volume capacity, and a live filesystem scan.
+      - name: Smoke test volume listing
+        shell: pwsh
+        run: |
+          $out = & .\target\release\ds.exe --plain --ascii
+          if ($LASTEXITCODE -ne 0) { throw "ds exited with $LASTEXITCODE" }
+          if ($out -notmatch 'Drive') { throw "expected the drive table" }
+          Write-Host $out
+
+      - name: Smoke test filesystem scan
+        shell: pwsh
+        run: |
+          # Scan the checkout itself: a real, deep-ish tree with known contents.
+          $out = & .\target\release\ds.exe . --plain --ascii --quiet --largest 3
+          if ($LASTEXITCODE -ne 0) { throw "ds exited with $LASTEXITCODE" }
+          if ($out -notmatch 'Scanned') { throw "expected a scan summary" }
+          if ($out -notmatch 'src') { throw "expected the src directory to be reported" }
+          Write-Host $out
+
+      - name: Smoke test JSON output parses
+        shell: pwsh
+        run: |
+          $json = & .\target\release\ds.exe . --json --largest 3 | ConvertFrom-Json
+          if ($null -eq $json.files) { throw "expected a files count" }
+          if ($null -eq $json.threads) { throw "expected a thread count" }
+          Write-Host "files=$($json.files) threads=$($json.threads)"
+
+  # Proves the two targets stay cross-compilable, which catches accidental
+  # platform-specific code leaking into shared modules.
+  cross:
+    name: cross-compile check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, x86_64-pc-windows-gnu, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check every target, including tests
+        run: cargo check --all-targets --target ${{ matrix.target }}
