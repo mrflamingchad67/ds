@@ -31,7 +31,7 @@ with one `stat`.
 | Drive enumeration | `GetLogicalDrives` | `/proc/mounts` | `getmntinfo` |
 | Volume capacity | `GetDiskFreeSpaceExW` | `statvfs` (`f_frsize`) | `statfs` (`f_bsize`) |
 | Filesystem scan | `std::fs::read_dir` | `std::fs::read_dir` | `std::fs::read_dir` |
-| Verified by | CI + local benchmarks | CI | CI |
+| Verified by | CI + local benchmarks | CI (220 tests) | CI (221 tests) |
 
 The scanner is platform-agnostic — it only uses `std::fs`. Everything
 platform-specific sits in `disk::platform`, which answers "which volumes exist
@@ -239,18 +239,18 @@ up to the scan root, so parents include descendants without a second pass.
 ## Development
 
 ```sh
-cargo test                  # 216 tests (214 on Windows, plus the Unix-gated ones)
-cargo clippy --all-targets  # clean on both Windows and Linux targets
+cargo test                  # 214 on Windows; 220 on Linux; 221 on macOS
+cargo clippy --all-targets  # clean on the Windows, Linux, and macOS targets
 cargo fmt --check
 cargo build --release       # ~0.75 MB stripped binary
 ```
 
-CI (`.github/workflows/ci.yml`) runs format, clippy, tests, and a release build
-on Linux and Windows, smoke-tests the Windows binary against real drives
-(volume listing, a live scan, JSON parsed with `ConvertFrom-Json`, and worker-count
-rejection), and cross-checks the Linux, Windows, and macOS targets with
-`--all-targets`. The Linux job is what proves the Unix backend works rather than
-merely compiling.
+CI runs seven jobs: full fmt/clippy/test/build on Windows, Linux, and macOS,
+plus a cross-compile matrix over four targets. The Windows job additionally
+smoke-tests the release binary against real drives (volume listing, a live scan,
+JSON parsed as JSON, and worker-count rejection). The macOS job asserts that
+more than one mount point is discovered, which is the regression that a
+`/proc/mounts`-only backend would fail.
 
 Tests use scratch directories under the system temp path and remove them first,
 so repeat runs are deterministic. They never drive the real terminal.
