@@ -77,6 +77,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "ds exited with $LASTEXITCODE" }
           if ($text -notmatch 'Drive') { throw "expected the drive table, got: $text" }
           Write-Host $text
+          # pwsh propagates the last native command's exit code; be explicit.
+          exit 0
 
       - name: Smoke test filesystem scan
         shell: pwsh
@@ -89,6 +91,8 @@ jobs:
           if ($text -notmatch '\d+ directories') { throw "expected a directory count" }
           if ($text -notmatch 'Path') { throw "expected the directory table header" }
           Write-Host $text
+          # pwsh propagates the last native command's exit code; be explicit.
+          exit 0
 
       - name: Smoke test scan of a known directory
         shell: pwsh
@@ -100,6 +104,8 @@ jobs:
           if ($text -notmatch 'main\.rs') { throw "expected main.rs in the report, got: $text" }
           if ($text -notmatch 'scan\.rs') { throw "expected scan.rs in the report" }
           Write-Host $text
+          # pwsh propagates the last native command's exit code; be explicit.
+          exit 0
 
       - name: Smoke test JSON output parses
         shell: pwsh
@@ -110,16 +116,31 @@ jobs:
           if ($null -eq $parsed.threads) { throw "expected a thread count" }
           if ($null -eq $parsed.largest_files) { throw "expected a largest-files array" }
           Write-Host "files=$($parsed.files) threads=$($parsed.threads)"
+          exit 0
 
       - name: Smoke test threads validation
         shell: pwsh
         run: |
           # An out-of-range worker count must be rejected, not silently clamped.
-          & .\target\release\ds.exe . --threads 0 2>&1 | Out-Null
-          if ($LASTEXITCODE -eq 0) { throw "--threads 0 should have failed" }
-          & .\target\release\ds.exe . --threads 9999 2>&1 | Out-Null
-          if ($LASTEXITCODE -eq 0) { throw "--threads 9999 should have failed" }
-          Write-Host "unreasonable worker counts correctly rejected"
+          # Start-Process is used because it reports the exit code
+          # unambiguously; a pipeline can leave $LASTEXITCODE stale.
+          function Assert-Fails($argsList, $what) {
+            $out = Join-Path $env:RUNNER_TEMP 'ds-args.json'
+            $err = Join-Path $env:RUNNER_TEMP 'ds-args.err'
+            $p = Start-Process -FilePath .\target\release\ds.exe `
+              -ArgumentList $argsList -NoNewWindow -Wait -PassThru `
+              -RedirectStandardOutput $out -RedirectStandardError $err
+            $stderr = Get-Content $err -Raw
+            if ($p.ExitCode -eq 0) { throw "$what should have failed" }
+            if ($stderr -notmatch 'invalid value') {
+              throw "$what produced no clap diagnostic, got: $stderr"
+            }
+          }
+
+          Assert-Fails @('.', '--threads', '0')    '--threads 0'
+          Assert-Fails @('.', '--threads', '9999') '--threads 9999'
+          Write-Host 'unreasonable worker counts correctly rejected'
+          exit 0
 
   # Proves the two targets stay cross-compilable, which catches accidental
   # platform-specific code leaking into shared modules.
