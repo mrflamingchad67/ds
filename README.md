@@ -13,6 +13,53 @@ show **what is actually using the space**.
 ╰──────────────────────────────────────────┴─────────┴────────╯
 ```
 
+## Install
+
+### Download a binary
+
+Grab an archive for your platform from [Releases](https://github.com/mrflamingchad67/ds/releases).
+Each one ships a `.sha256` file to verify the download.
+
+**Windows (PowerShell)** — no installer needed, drop it anywhere on your PATH:
+
+```powershell
+$url = "https://github.com/mrflamingchad67/ds/releases/latest/download/ds-x86_64-pc-windows-msvc.zip"
+Invoke-WebRequest $url -OutFile ds.zip
+Expand-Archive ds.zip -DestinationPath "$env:LOCALAPPDATA\Programs\ds"
+$env:PATH += ";$env:LOCALAPPDATA\Programs\ds"
+```
+
+**macOS or Linux:**
+
+```sh
+tar xzf ds-x86_64-unknown-linux-gnu.tar.gz   # or aarch64-apple-darwin, etc.
+sudo mv ds /usr/local/bin/
+```
+
+Verify it worked:
+
+```sh
+ds --plain --ascii C:
+```
+
+### With cargo
+
+```sh
+cargo install --git https://github.com/mrflamingchad67/ds
+```
+
+This builds from source and needs a Rust toolchain. The binary is not on
+crates.io, so `--git` is required rather than just `cargo install ds`.
+
+### From source
+
+```sh
+git clone https://github.com/mrflamingchad67/ds
+cd ds
+cargo build --release
+./target/release/ds
+```
+
 ## Two separate jobs
 
 | Concern | Source |

@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish assets for"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Each platform builds natively rather than cross-compiling. Cross-compiling
+  # from a single runner would mean bundling a Linux linker, an Apple linker, and
+  # a MinGW toolchain in one job, which is a lot of moving parts for a binary
+  # this small. Native builds also mean the artifacts match what a user gets
+  # from a normal cargo build on that platform.
+  build:
+    name: build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: ds.exe
+            archive: ds-x86_64-pc-windows-msvc.zip
+          - name: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: ds
+            archive: ds-x86_64-unknown-linux-gnu.tar.gz
+          - name: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            binary: ds
+            archive: ds-aarch64-unknown-linux-gnu.tar.gz
+          - name: aarch64-apple-darwin
+            os: macos-latest
+            binary: ds
+            archive: ds-aarch64-apple-darwin.tar.gz
+          - name: x86_64-apple-darwin
+            os: macos-13
+            binary: ds
+            archive: ds-x86_64-apple-darwin.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the resolved toolchain
+        run: |
+          rustup show active-toolchain
+          cargo --version
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.name }}
+
+      - name: Verify the binary actually runs
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.name }}/release/${{ matrix.binary }}"
+          "$BIN" --version
+          if [[ "${{ matrix.os }}" == windows* ]]; then
+            "$BIN" --plain --ascii | head -5
+          else
+            "$BIN" --plain --ascii | head -5
+          fi
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.name }}/release
+          strip ds || true
+          tar czf "$GITHUB_WORKSPACE/${{ matrix.archive }}" ds
+          cd "$GITHUB_WORKSPACE"
+          sha256sum "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.name }}/release/${{ matrix.binary }}" -DestinationPath "${{ matrix.archive }}"
+          $hash = (Get-FileHash "${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.archive }}" | Out-File -FilePath "${{ matrix.archive }}.sha256" -Encoding ascii -NoNewline
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+          if-no-files-found: error
+
+  # Everything above must succeed before the tag gets a release attached to it.
+  # A tag pointing at a release with missing assets is worse than a failed
+  # workflow, because it looks like a finished install.
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Build the notes
+        run: |
+          {
+            echo "Fast native disk analyzer for Windows, Linux, and macOS."
+            echo
+            echo "See the README for build flags and behavior notes."
+            echo
+            echo "### Verify a download"
+            echo
+            echo 'Each archive ships a `.sha256` file:'
+            echo
+            echo '```sh'
+            echo "sha256sum -c ds-x86_64-unknown-linux-gnu.tar.gz.sha256"
+            echo "```"
+            echo
+            echo "On PowerShell:"
+            echo
+            echo '```powershell'
+            echo "Get-FileHash ds-x86_64-pc-windows-msvc.zip -Algorithm SHA256"
+            echo "```"
+            echo
+            echo "### Install with cargo"
+            echo
+            echo '```sh'
+            echo "cargo install --git https://github.com/mrflamingchad67/ds"
+            echo "```"
+          } > NOTES.md
+          cat NOTES.md
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+            gh release edit "$TAG" --notes-file NOTES.md
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file NOTES.md \
+              --verify-tag \
+              assets/*
+          fi
