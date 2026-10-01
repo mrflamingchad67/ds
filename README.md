@@ -37,12 +37,24 @@ The scanner itself is platform-agnostic — it only uses `std::fs`. The differen
 is the small `disk::platform` module, which answers "which volumes exist and how
 much room is on them".
 
-The Unix backend was written alongside the Windows one but was not built until a
-Linux target was added, at which point it turned out not to compile (a missing
-`OsStrExt` import and a malformed iterator helper). Both are fixed, and CI now
-runs the Unix tests on Linux. **Treat Linux support as unproven until that CI run
-goes green** — it has never been executed on a real Unix machine from here, as
-no WSL or Linux host was available.
+### How this was found
+
+The Unix backend was written alongside the Windows one but never compiled,
+because only the host target was ever installed. Adding the Linux target exposed
+two compile errors immediately, and the first CI run then found two more bugs
+that Windows had hidden:
+
+* `scan_target` and `volume_root` trimmed `\` as a separator. On Unix a
+  backslash is a legal character in a file name, so trailing-backslash trimming
+  corrupted paths. Drive-letter handling is now `cfg(windows)`.
+* The aggregator tests hard-coded `C:\…` fixtures. On Unix `C:\` is a single
+  path component with no parent, which silently disabled the ancestor walk-up
+  those tests exist to verify. They now use a relative root that has a real
+  parent everywhere.
+
+Neither was visible from Windows alone. **Linux support should be considered
+verified only once the CI run is green** — it has still never been executed
+locally, since no WSL or Linux host was available.
 
 ## Usage
 

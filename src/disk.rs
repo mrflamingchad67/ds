@@ -81,35 +81,16 @@ pub fn query(path: &Path) -> Result<DiskUsage, String> {
 /// `C`, `c:`, `C:\`, and `C:\Users` all resolve to `C:\`, because free and total
 /// space are properties of the volume rather than the directory.
 pub fn volume_root(path: &Path) -> PathBuf {
-    let raw = path.as_os_str().to_string_lossy().into_owned();
-    let trimmed = raw.trim();
-    let untrimmed = trimmed.trim_end_matches(['\\', '/']);
+    let text = trim_root(path);
 
-    if untrimmed.is_empty() {
-        return PathBuf::from(if trimmed.contains('\\') { "\\" } else { "/" });
-    }
-
-    let bytes = untrimmed.as_bytes();
-
-    // Bare drive letter, e.g. `C` or `c:` -> `C:\`
-    if bytes.len() == 1 && bytes[0].is_ascii_alphabetic() {
-        return PathBuf::from(format!("{}:\\", untrimmed.to_ascii_uppercase()));
-    }
-    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-        let letter = bytes[0].to_ascii_uppercase() as char;
+    // A drive letter is a Windows concept; on Unix `/data` is already a mount
+    // point and must not be folded into `/`.
+    #[cfg(windows)]
+    if let Some(letter) = drive_letter_of(&text) {
         return PathBuf::from(format!("{letter}:\\"));
     }
 
-    // `C:\some\dir` or `C:/some/dir` -> the drive root.
-    let mut chars = untrimmed.chars();
-    if let (Some(letter), Some(':'), Some(sep)) = (chars.next(), chars.next(), chars.next())
-        && letter.is_ascii_alphabetic()
-        && (sep == '\\' || sep == '/')
-    {
-        return PathBuf::from(format!("{}:\\", letter.to_ascii_uppercase()));
-    }
-
-    PathBuf::from(untrimmed)
+    PathBuf::from(text)
 }
 
 /// Normalise a scan target without collapsing it to its volume.
@@ -117,30 +98,73 @@ pub fn volume_root(path: &Path) -> PathBuf {
 /// `C:` becomes `C:\`, but `C:\Users` stays `C:\Users`, because a filesystem scan
 /// must walk exactly what the user asked for.
 pub fn scan_target(path: &Path) -> PathBuf {
-    let raw = path.as_os_str().to_string_lossy().into_owned();
-    let trimmed = raw.trim();
+    let text = trim_root(path);
 
-    if trimmed.is_empty() {
-        return PathBuf::from("/");
-    }
-
-    let untrimmed = trimmed.trim_end_matches(['\\', '/']);
-    if untrimmed.is_empty() {
-        return PathBuf::from(if trimmed.contains('\\') { "\\" } else { "/" });
-    }
-
-    let bytes = untrimmed.as_bytes();
-
-    if bytes.len() == 1 && bytes[0].is_ascii_alphabetic() {
-        return PathBuf::from(format!("{}:\\", untrimmed.to_ascii_uppercase()));
-    }
-    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-        let letter = bytes[0].to_ascii_uppercase() as char;
+    // `C` and `C:` (and `C:\`, already trimmed to `C:`) mean the volume root.
+    // Anything with a subdirectory is kept exactly as given, so
+    // `C:\Users` does not silently become a whole-volume scan.
+    #[cfg(windows)]
+    if let Some(letter) = bare_drive_letter_of(&text) {
         return PathBuf::from(format!("{letter}:\\"));
     }
 
-    // Keep the user's path intact so a subdirectory scan stays a subdirectory.
-    PathBuf::from(untrimmed)
+    PathBuf::from(text)
+}
+
+/// Trim surrounding space and trailing separators, defaulting to the root.
+fn trim_root(path: &Path) -> String {
+    let raw = path.as_os_str().to_string_lossy().trim().to_string();
+
+    // Only the platform's own separator is trimmed: a backslash is a legal
+    // character in a Unix file name, so stripping it there would corrupt paths.
+    let trimmed = if cfg!(windows) {
+        raw.trim_end_matches(['\\', '/'])
+    } else {
+        raw.trim_end_matches('/')
+    };
+
+    if trimmed.is_empty() {
+        return if cfg!(windows) && raw.contains('\\') {
+            "\\".to_string()
+        } else {
+            "/".to_string()
+        };
+    }
+
+    trimmed.to_string()
+}
+
+/// The uppercase letter of a `C` or `C:` argument, with nothing after it.
+#[cfg(windows)]
+fn bare_drive_letter_of(text: &str) -> Option<char> {
+    let bytes = text.as_bytes();
+
+    let is_bare = bytes.len() == 1 || (bytes.len() == 2 && bytes[1] == b':');
+    if !is_bare || !is_ascii_letter(text) {
+        return None;
+    }
+
+    Some(bytes[0].to_ascii_uppercase() as char)
+}
+
+/// The uppercase letter of a `C`, `C:`, or `C:\...` argument, if any.
+///
+/// Used for volume capacity, where any path on the drive reports the drive.
+#[cfg(windows)]
+fn drive_letter_of(text: &str) -> Option<char> {
+    if let Some(letter) = bare_drive_letter_of(text) {
+        return Some(letter);
+    }
+
+    let bytes = text.as_bytes();
+    let has_root = bytes.len() >= 3 && bytes[1] == b':' && matches!(bytes[2], b'\\' | b'/');
+
+    (has_root && is_ascii_letter(text)).then(|| bytes[0].to_ascii_uppercase() as char)
+}
+
+#[cfg(windows)]
+fn is_ascii_letter(text: &str) -> bool {
+    text.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
 }
 
 #[cfg(windows)]

@@ -492,9 +492,27 @@ impl Aggregator {
 mod tests {
     use super::*;
 
-    fn report(path: &str, bytes: u64, files: u64, subdirs: u64) -> DirReport {
+    /// Portable stand-in for a volume root.
+    ///
+    /// A relative name is used deliberately: `C:\` is a single path component
+    /// with no parent on Unix, which would silently disable the ancestor
+    /// walk-up these tests exist to verify.
+    fn root() -> PathBuf {
+        PathBuf::from("root")
+    }
+
+    /// A path below [`root`], given with `/` separators.
+    fn dir(rel: &str) -> PathBuf {
+        let mut path = root();
+        for part in rel.split('/').filter(|part| !part.is_empty()) {
+            path.push(part);
+        }
+        path
+    }
+
+    fn report(rel: &str, bytes: u64, files: u64, subdirs: u64) -> DirReport {
         DirReport {
-            path: PathBuf::from(path),
+            path: dir(rel),
             bytes,
             files,
             subdirs,
@@ -503,8 +521,8 @@ mod tests {
 
     #[test]
     fn a_single_directory_totals_its_own_files() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        agg.add_reports(&[report("C:\\", 100, 2, 0)]);
+        let mut agg = Aggregator::new(root(), 4, 4);
+        agg.add_reports(&[report("", 100, 2, 0)]);
 
         assert_eq!(agg.bytes(), 100);
         assert_eq!(agg.files(), 2);
@@ -515,34 +533,34 @@ mod tests {
     fn the_directory_count_counts_reads_not_discoveries() {
         // Each directory is counted when its own report arrives, so a parent
         // listing three children must not inflate the total.
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        agg.add_reports(&[report("C:\\", 0, 0, 3)]);
-        agg.add_reports(&[report("C:\\a", 0, 0, 0)]);
-        agg.add_reports(&[report("C:\\b", 0, 0, 0)]);
-        agg.add_reports(&[report("C:\\c", 0, 0, 0)]);
+        let mut agg = Aggregator::new(root(), 4, 4);
+        agg.add_reports(&[report("", 0, 0, 3)]);
+        agg.add_reports(&[report("a", 0, 0, 0)]);
+        agg.add_reports(&[report("b", 0, 0, 0)]);
+        agg.add_reports(&[report("c", 0, 0, 0)]);
 
         assert_eq!(agg.directories(), 4, "root plus three children");
-        assert_eq!(agg.dir_totals(Path::new("C:\\")).unwrap().subdirs, 3);
+        assert_eq!(agg.dir_totals(&root()).unwrap().subdirs, 3);
     }
 
     #[test]
     fn parent_directories_include_descendants() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
+        let mut agg = Aggregator::new(root(), 4, 4);
         agg.add_reports(&[
-            report("C:\\Games", 0, 0, 2),
-            report("C:\\Games\\Steam", 30_000, 3, 0),
-            report("C:\\Games\\Minecraft", 2_500, 2, 0),
+            report("Games", 0, 0, 2),
+            report("Games\\Steam", 30_000, 3, 0),
+            report("Games\\Minecraft", 2_500, 2, 0),
         ]);
 
-        let games = agg.dir_totals(Path::new("C:\\Games")).unwrap();
+        let games = agg.dir_totals(&dir("Games")).unwrap();
         assert_eq!(games.bytes, 32_500, "Games must include its children");
         assert_eq!(games.files, 5);
         assert_eq!(games.subdirs, 2);
 
-        let steam = agg.dir_totals(Path::new("C:\\Games\\Steam")).unwrap();
+        let steam = agg.dir_totals(&dir("Games\\Steam")).unwrap();
         assert_eq!(steam.bytes, 30_000);
 
-        let root = agg.dir_totals(Path::new("C:\\")).unwrap();
+        let root = agg.dir_totals(&root()).unwrap();
         assert_eq!(root.bytes, 32_500);
         assert_eq!(root.subdirs, 1, "root has one child: Games");
     }
@@ -553,32 +571,32 @@ mod tests {
         // C:\Games\Steam     -> 30 GB
         let mb = 1_000_000u64;
         let gb = 1_000 * mb;
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
+        let mut agg = Aggregator::new(root(), 4, 4);
         agg.add_reports(&[
-            report("C:\\Games", 0, 0, 2),
-            report("C:\\Games\\Minecraft", 500 * mb, 1, 1),
-            report("C:\\Games\\Minecraft\\assets", 2 * gb, 4, 0),
-            report("C:\\Games\\Steam", 30 * gb, 20, 0),
+            report("Games", 0, 0, 2),
+            report("Games\\Minecraft", 500 * mb, 1, 1),
+            report("Games\\Minecraft\\assets", 2 * gb, 4, 0),
+            report("Games\\Steam", 30 * gb, 20, 0),
         ]);
 
-        let mc = agg.dir_totals(Path::new("C:\\Games\\Minecraft")).unwrap();
+        let mc = agg.dir_totals(&dir("Games\\Minecraft")).unwrap();
         assert_eq!(mc.bytes, 500 * mb + 2 * gb);
 
-        let steam = agg.dir_totals(Path::new("C:\\Games\\Steam")).unwrap();
+        let steam = agg.dir_totals(&dir("Games\\Steam")).unwrap();
         assert_eq!(steam.bytes, 30 * gb);
 
-        let games = agg.dir_totals(Path::new("C:\\Games")).unwrap();
+        let games = agg.dir_totals(&dir("Games")).unwrap();
         assert_eq!(games.bytes, 30 * gb + 500 * mb + 2 * gb);
     }
 
     #[test]
     fn batches_accumulate_like_single_reports() {
-        let mut batched = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        batched.add_reports(&[report("C:\\a", 10, 1, 1)]);
-        batched.add_reports(&[report("C:\\a\\b", 20, 2, 0)]);
+        let mut batched = Aggregator::new(root(), 4, 4);
+        batched.add_reports(&[report("a", 10, 1, 1)]);
+        batched.add_reports(&[report("a\\b", 20, 2, 0)]);
 
-        let mut single = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        single.add_reports(&[report("C:\\a", 10, 1, 1), report("C:\\a\\b", 20, 2, 0)]);
+        let mut single = Aggregator::new(root(), 4, 4);
+        single.add_reports(&[report("a", 10, 1, 1), report("a\\b", 20, 2, 0)]);
 
         assert_eq!(batched.bytes(), single.bytes());
         assert_eq!(batched.files(), single.files());
@@ -587,49 +605,49 @@ mod tests {
 
     #[test]
     fn top_dirs_returns_the_biggest_first() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
+        let mut agg = Aggregator::new(root(), 4, 4);
         agg.add_reports(&[
-            report("C:\\small", 10, 1, 0),
-            report("C:\\big", 900, 1, 0),
-            report("C:\\mid", 400, 1, 0),
+            report("small", 10, 1, 0),
+            report("big", 900, 1, 0),
+            report("mid", 400, 1, 0),
         ]);
 
         let top = agg.top_dirs(3);
         let names: Vec<String> = top
             .iter()
-            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(names, ["C:\\big", "C:\\mid", "C:\\small"]);
+        assert_eq!(names, ["big", "mid", "small"]);
     }
 
     #[test]
     fn top_dirs_respects_its_cap_and_excludes_the_root() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
+        let mut agg = Aggregator::new(root(), 4, 4);
         agg.add_reports(&[
-            report("C:\\a", 10, 1, 0),
-            report("C:\\b", 20, 1, 0),
-            report("C:\\c", 30, 1, 0),
+            report("a", 10, 1, 0),
+            report("b", 20, 1, 0),
+            report("c", 30, 1, 0),
         ]);
 
         let top = agg.top_dirs(2);
         assert_eq!(top.len(), 2, "cap wins over the root's larger total");
         let names: Vec<String> = top
             .iter()
-            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(names, ["C:\\c", "C:\\b"]);
+        assert_eq!(names, ["c", "b"], "biggest first");
     }
 
     #[test]
     fn top_dirs_of_zero_returns_nothing() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        agg.add_reports(&[report("C:\\a", 10, 1, 0)]);
+        let mut agg = Aggregator::new(root(), 4, 4);
+        agg.add_reports(&[report("a", 10, 1, 0)]);
         assert!(agg.top_dirs(0).is_empty());
     }
 
     #[test]
     fn largest_files_are_bounded_and_ordered() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 3, 4);
+        let mut agg = Aggregator::new(root(), 3, 4);
         for n in 1..=100u64 {
             agg.add_files(&[(n, PathBuf::from(format!("file-{n}")))]);
         }
@@ -643,14 +661,14 @@ mod tests {
 
     #[test]
     fn largest_files_of_zero_retains_nothing() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 0, 4);
+        let mut agg = Aggregator::new(root(), 0, 4);
         agg.add_files(&[(10, PathBuf::from("a"))]);
         assert!(agg.top_files().is_empty());
     }
 
     #[test]
     fn largest_files_break_ties_by_path() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 2, 4);
+        let mut agg = Aggregator::new(root(), 2, 4);
         agg.add_files(&[(5, PathBuf::from("b")), (5, PathBuf::from("a"))]);
         let top = agg.top_files();
         assert_eq!(top[0].0, PathBuf::from("a"));
@@ -658,7 +676,7 @@ mod tests {
 
     #[test]
     fn extension_totals_merge_and_sort_by_size() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
+        let mut agg = Aggregator::new(root(), 4, 4);
         agg.add_extensions(&[
             (
                 "mp4".to_string(),
@@ -686,7 +704,7 @@ mod tests {
 
     #[test]
     fn issues_are_counted_but_only_a_sample_is_retained() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 2);
+        let mut agg = Aggregator::new(root(), 4, 2);
         for n in 0..10 {
             agg.add_issues(&[(PathBuf::from(format!("p{n}")), "denied".to_string())]);
         }
@@ -697,9 +715,9 @@ mod tests {
 
     #[test]
     fn tracked_directories_grows_with_directories_not_files() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        agg.add_reports(&[report("C:\\a", 0, 0, 1)]);
-        agg.add_reports(&[report("C:\\a\\b", 0, 0, 1)]);
+        let mut agg = Aggregator::new(root(), 4, 4);
+        agg.add_reports(&[report("a", 0, 0, 1)]);
+        agg.add_reports(&[report("a\\b", 0, 0, 1)]);
         // 10,000 files in one directory must not add 10,000 map entries.
         agg.add_files(&[(1, PathBuf::from("f"))]);
 
@@ -709,8 +727,8 @@ mod tests {
 
     #[test]
     fn entries_render_human_units() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        agg.add_reports(&[report("C:\\a", 1024 * 1024 * 3, 2, 0)]);
+        let mut agg = Aggregator::new(root(), 4, 4);
+        agg.add_reports(&[report("a", 1024 * 1024 * 3, 2, 0)]);
         agg.add_extensions(&[(
             "mp4".to_string(),
             ExtTotals {
@@ -718,7 +736,7 @@ mod tests {
                 files: 1,
             },
         )]);
-        agg.add_files(&[(4096, PathBuf::from("C:\\a\\big.bin"))]);
+        agg.add_files(&[(4096, dir("a/big.bin"))]);
 
         let dirs = agg.dir_entries(5, true);
         assert_eq!(dirs[0].size, "3.0 MB");
@@ -728,19 +746,19 @@ mod tests {
 
         let files = agg.file_entries(true);
         assert_eq!(files[0].size, "4.0 KB");
-        assert_eq!(files[0].path, "C:\\a\\big.bin");
+        assert_eq!(files[0].path, dir("a/big.bin").to_string_lossy());
     }
 
     #[test]
     fn entries_can_render_raw_bytes() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        agg.add_reports(&[report("C:\\a", 1234567, 2, 0)]);
+        let mut agg = Aggregator::new(root(), 4, 4);
+        agg.add_reports(&[report("a", 1234567, 2, 0)]);
         assert_eq!(agg.dir_entries(5, false)[0].size, "1,234,567");
     }
 
     #[test]
     fn an_empty_aggregator_reports_nothing() {
-        let agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
+        let agg = Aggregator::new(root(), 4, 4);
         assert_eq!(agg.bytes(), 0);
         assert_eq!(agg.files(), 0);
         assert_eq!(agg.directories(), 0);
@@ -750,9 +768,9 @@ mod tests {
 
     #[test]
     fn totals_saturate_instead_of_overflowing() {
-        let mut agg = Aggregator::new(PathBuf::from("C:\\"), 4, 4);
-        agg.add_reports(&[report("C:\\a", u64::MAX, 1, 0)]);
-        agg.add_reports(&[report("C:\\a", u64::MAX, 1, 0)]);
-        assert_eq!(agg.dir_totals(Path::new("C:\\a")).unwrap().bytes, u64::MAX);
+        let mut agg = Aggregator::new(root(), 4, 4);
+        agg.add_reports(&[report("a", u64::MAX, 1, 0)]);
+        agg.add_reports(&[report("a", u64::MAX, 1, 0)]);
+        assert_eq!(agg.dir_totals(&dir("a")).unwrap().bytes, u64::MAX);
     }
 }

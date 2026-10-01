@@ -71,28 +71,43 @@ jobs:
       - name: Smoke test volume listing
         shell: pwsh
         run: |
-          $out = & .\target\release\ds.exe --plain --ascii
+          # Join first: PowerShell's -match returns per-element for arrays, so
+          # testing the raw array silently passes or fails for the wrong reason.
+          $text = (& .\target\release\ds.exe --plain --ascii | Out-String)
           if ($LASTEXITCODE -ne 0) { throw "ds exited with $LASTEXITCODE" }
-          if ($out -notmatch 'Drive') { throw "expected the drive table" }
-          Write-Host $out
+          if ($text -notmatch 'Drive') { throw "expected the drive table, got: $text" }
+          Write-Host $text
 
       - name: Smoke test filesystem scan
         shell: pwsh
         run: |
           # Scan the checkout itself: a real, deep-ish tree with known contents.
-          $out = & .\target\release\ds.exe . --plain --ascii --quiet --largest 3
+          $text = (& .\target\release\ds.exe . --plain --ascii --quiet --largest 3 | Out-String)
           if ($LASTEXITCODE -ne 0) { throw "ds exited with $LASTEXITCODE" }
-          if ($out -notmatch 'Scanned') { throw "expected a scan summary" }
-          if ($out -notmatch 'src') { throw "expected the src directory to be reported" }
-          Write-Host $out
+          if ($text -notmatch 'Scanned') { throw "expected a scan summary, got: $text" }
+          if ($text -notmatch 'src') { throw "expected src to be reported, got: $text" }
+          if ($text -notmatch 'Cargo\.toml') { throw "expected Cargo.toml to be reported" }
+          Write-Host $text
 
       - name: Smoke test JSON output parses
         shell: pwsh
         run: |
-          $json = & .\target\release\ds.exe . --json --largest 3 | ConvertFrom-Json
-          if ($null -eq $json.files) { throw "expected a files count" }
-          if ($null -eq $json.threads) { throw "expected a thread count" }
-          Write-Host "files=$($json.files) threads=$($json.threads)"
+          $json = & .\target\release\ds.exe . --json --largest 3 | Out-String
+          $parsed = $json | ConvertFrom-Json
+          if ($null -eq $parsed.files) { throw "expected a files count" }
+          if ($null -eq $parsed.threads) { throw "expected a thread count" }
+          if ($null -eq $parsed.largest_files) { throw "expected a largest-files array" }
+          Write-Host "files=$($parsed.files) threads=$($parsed.threads)"
+
+      - name: Smoke test threads validation
+        shell: pwsh
+        run: |
+          # An out-of-range worker count must be rejected, not silently clamped.
+          & .\target\release\ds.exe . --threads 0 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "--threads 0 should have failed" }
+          & .\target\release\ds.exe . --threads 9999 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "--threads 9999 should have failed" }
+          Write-Host "unreasonable worker counts correctly rejected"
 
   # Proves the two targets stay cross-compilable, which catches accidental
   # platform-specific code leaking into shared modules.
