@@ -111,33 +111,36 @@ jobs:
           pattern: release-*
           merge-multiple: true
 
-      - name: Build the notes
+      - name: Write the release notes
         run: |
-          {
-            echo "Fast native disk analyzer for Windows, Linux, and macOS."
-            echo
-            echo "See the README for build flags and behavior notes."
-            echo
-            echo "### Verify a download"
-            echo
-            echo 'Each archive ships a `.sha256` file:'
-            echo
-            echo '```sh'
-            echo "sha256sum -c ds-x86_64-unknown-linux-gnu.tar.gz.sha256"
-            echo "```"
-            echo
-            echo "On PowerShell:"
-            echo
-            echo '```powershell'
-            echo "Get-FileHash ds-x86_64-pc-windows-msvc.zip -Algorithm SHA256"
-            echo "```"
-            echo
-            echo "### Install with cargo"
-            echo
-            echo '```sh'
-            echo "cargo install --git https://github.com/mrflamingchad67/ds"
-            echo "```"
-          } > NOTES.md
+          # A heredoc rather than a chain of echo calls. The previous version
+          # mixed single and double quotes inside echo, which bash parsed as an
+          # unterminated string and the step died before creating the file.
+          cat > NOTES.md <<'EOF'
+          Fast native disk analyzer for Windows, Linux, and macOS.
+
+          One binary per platform, no runtime dependencies, and a SHA256 file
+          alongside every archive. See the README for flags and behavior notes.
+
+          ### Verify a download
+
+          ```sh
+          sha256sum -c ds-x86_64-unknown-linux-gnu.tar.gz.sha256
+          ```
+
+          On PowerShell:
+
+          ```powershell
+          Get-FileHash ds-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+          ```
+
+          ### Install with cargo
+
+          ```sh
+          cargo install --git https://github.com/mrflamingchad67/ds
+          ```
+          EOF
+          sed -i 's/^          //' NOTES.md
           cat NOTES.md
 
       - name: Create or update the release
