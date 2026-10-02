@@ -1,9 +1,24 @@
 [package]
-name = "ds"
+# The crate is named disk-spacer because `ds` is already taken on crates.io by
+# an unrelated robotics library. The installed binary is still `ds`, set below.
+name = "disk-spacer"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Lightweight native disk space utility"
+description = "A fast native disk analyzer that shows exactly what is using your space on Windows, Linux, and macOS"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/mrflamingchad67/ds"
+homepage = "https://github.com/mrflamingchad67/ds"
+documentation = "https://github.com/mrflamingchad67/ds#readme"
+keywords = ["disk", "usage", "space", "cli", "analyzer"]
+categories = ["command-line-utilities", "filesystem"]
+# rust-toolchain.toml is repo-only, and target/ is never in a crate package.
+exclude = [".github/", "rust-toolchain.toml"]
+
+[[bin]]
+name = "ds"
+path = "src/main.rs"
 
 [profile.release]
 opt-level = "z"
