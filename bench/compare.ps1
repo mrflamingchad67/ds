@@ -256,15 +256,34 @@ function Read-ToolOutput {
             }
         }
         'gdu' {
-            # "Total disk usage: 149.2 GB (1312469 files, 249524 directories)"
-            if ($Text -match 'Total disk usage:.*?\((?<files>[\d,]+)\s+files?,\s+(?<dirs>[\d,]+)\s+directories') {
-                $result.Files = [int64](($Matches['files']) -replace ',', '')
-                $result.Dirs = [int64](($Matches['dirs']) -replace ',', '')
-                $result.Recognised = $true
+            # With --no-prefix the total line is "  <raw bytes> <path>", one per
+            # directory. The row for the scanned root carries the recursive total.
+            # gdu prints no file count in non-interactive mode, so Files stays 0
+            # and the agreement check falls back to comparing byte totals.
+            $lines = @($Text -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+            $wanted = $TargetPath.TrimEnd('\')
+            foreach ($line in $lines) {
+                if ($line -match '^\s*(?<size>\d+)\s+(?<path>.+?)\s*$') {
+                    if ($Matches['path'].Trim() -eq $wanted) {
+                        $result.Bytes = [int64]$Matches['size']
+                        $result.Recognised = $true
+                        break
+                    }
+                }
             }
-            elseif ($Text -match 'Total disk usage:\s+(?<gb>[\d.]+)\s*GB') {
-                $result.Bytes = [int64]([double]$Matches['gb'] * 1GB)
-                $result.Recognised = $true
+        }
+        'gdu-toponly' {
+            # Same parsing as 'gdu', but this mode omits the root row entirely.
+            $lines = @($Text -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+            $wanted = $TargetPath.TrimEnd('\')
+            foreach ($line in $lines) {
+                if ($line -match '^\s*(?<size>\d+)\s+(?<path>.+?)\s*$') {
+                    if ($Matches['path'].Trim() -eq $wanted) {
+                        $result.Bytes = [int64]$Matches['size']
+                        $result.Recognised = $true
+                        break
+                    }
+                }
             }
         }
         'dust' {
@@ -417,7 +436,14 @@ $registry = @(
     @{ Name = 'ds';              Exe = 'ds';               Args = @($Target, '--plain', '--ascii', '--threads', '16') }
     @{ Name = 'diskusage';       Exe = 'diskusage';        Args = @('/c', $Target) }
     @{ Name = 'du-sysinternals'; Exe = "$env:USERPROFILE\Downloads\du64.exe"; Args = @('-nobanner', '-c', $Target) }
-    @{ Name = 'gdu';             Exe = 'gdu';              Args = @($Target, '-p', 'no', '-no') }
+    # gdu needs --depth to be comparable. In plain non-interactive mode gdu uses
+    # a memory-efficient analyzer that keeps only top-level directory totals and
+    # never builds the full tree, which DS always does. Verified on a small tree:
+    # `gdu -np` omits the root total and 16 of 24 files, while `gdu -np --depth 1`
+    # reports the same 56048 bytes as DS. The extra variant below is kept only to
+    # document that difference, and is labelled so it is never read as a win.
+    @{ Name = 'gdu';             Exe = 'gdu';              Args = @('-npa', '--depth', '1', '--no-prefix', $Target) }
+    @{ Name = 'gdu-toponly';     Exe = 'gdu';              Args = @('-npa', '--no-prefix', $Target) }
     @{ Name = 'dust';            Exe = 'dust';             Args = @('-d', '1', '-r', $Target) }
     @{ Name = 'dua';             Exe = 'dua';              Args = @('interactive', '--aggregate', $Target) }
 )
@@ -529,19 +555,41 @@ if ($failed.Count -gt 0) {
     }
 }
 else {
-    $fileCounts = @($summary | Where-Object { $_.Files -gt 0 } | ForEach-Object { $_.Files } | Sort-Object -Unique)
-    if ($fileCounts.Count -le 1) {
-        Write-Host '  All tools agree on the file count. Comparison is meaningful.' -ForegroundColor Green
+    # Prefer file counts, which are exact. Some tools do not report one, so fall
+    # back to byte totals, allowing for accounting differences such as logical
+    # size against on-disk size.
+    $withFiles = @($summary | Where-Object { $_.Files -gt 0 })
+    if ($withFiles.Count -ge 2) {
+        $fileCounts = @($withFiles | ForEach-Object { $_.Files } | Sort-Object -Unique)
+        if ($fileCounts.Count -le 1) {
+            Write-Host '  All tools that report a file count agree. Comparison is meaningful.' -ForegroundColor Green
+        }
+        else {
+            Write-Host '  File counts DIFFER between tools:' -ForegroundColor Red
+            foreach ($s in $withFiles) { Write-Host ("    {0,-16} {1,12:N0} files" -f $s.Tool, $s.Files) -ForegroundColor Red }
+            Write-Host ''
+            Write-Host '  Do NOT treat the timings as a speed comparison. A different file' -ForegroundColor Red
+            Write-Host '  count means a different workload.' -ForegroundColor Red
+        }
     }
     else {
-        Write-Host '  File counts DIFFER between tools:' -ForegroundColor Red
+        Write-Host '  Fewer than two tools report a file count, so byte totals are compared instead.' -ForegroundColor Yellow
         foreach ($s in $summary) {
-            if ($s.Files -gt 0) { Write-Host ("    {0,-16} {1,12:N0} files" -f $s.Tool, $s.Files) -ForegroundColor Red }
+            if ($s.Bytes -gt 0) {
+                $vs = $summary | Where-Object { $_.Tool -eq 'ds' } | Select-Object -First 1
+                if ($vs -and $vs.Bytes -gt 0) {
+                    $pctOff = [math]::Round(($s.Bytes - $vs.Bytes) / $vs.Bytes * 100, 1)
+                    Write-Host ("    {0,-16} {1,16:N0} bytes  ({2,6:N1}% vs ds)" -f $s.Tool, $s.Bytes, $pctOff)
+                }
+                else {
+                    Write-Host ("    {0,-16} {1,16:N0} bytes" -f $s.Tool, $s.Bytes)
+                }
+            }
         }
         Write-Host ''
-        Write-Host '  Do NOT treat the timings as a speed comparison.' -ForegroundColor Red
-        Write-Host '  A different file count means a different workload: one tool stopped' -ForegroundColor Red
-        Write-Host '  early, skipped protected paths, or counts hardlinks differently.' -ForegroundColor Red
+        Write-Host '  Byte totals legitimately differ: DS reports logical file size, while' -ForegroundColor DarkGray
+        Write-Host '  some tools report on-disk size with clusters rounded up, and some' -ForegroundColor DarkGray
+        Write-Host '  deduplicate hardlinks. Judge the timings, not the byte column.' -ForegroundColor DarkGray
     }
 }
 

@@ -116,9 +116,39 @@ for truncation to be possible at all.
 | Tool | Status | Notes |
 | --- | --- | --- |
 | `ds` | this repo | `--plain --ascii --threads 16` |
-| `diskusage` | ships with Windows | **Requires administrator privileges.** Without elevation it prints `The DiskUsage utility requires that you have administrative privileges.` and exits immediately, which is why its timings look artificially fast. Run the harness elevated, or skip it. |
+| `diskusage` | ships with Windows | **Requires administrator privileges.** Without elevation it prints `The DiskUsage utility requires that you have administrative privileges.` and exits immediately, which is why its timings look artificially fast. Run the harness elevated, or skip it. Output is `SizeOnDisk,Files,Directory path`, one row per directory, followed by a `<volume> in use` summary line that is not part of the tree. |
 | `du-sysinternals` | optional | `-nobanner -c`. Its default is one level of detail; the root row's totals are still recursive. `-n` disables recursion and would not be comparable. |
-| `gdu`, `dust`, `dua` | optional | Installed on demand; not currently present. |
+| `gdu` | `dundee/gdu`, Go, not crates.io | Needs `--depth 1` to be comparable. See below. |
+| `dust`, `dua` | optional | Installed on demand; not currently present. |
+
+### gdu needs `--depth 1`, or it is not doing the same work
+
+gdu's own documentation states that in non-interactive mode, without `--top` or
+`--depth`, it uses a memory-efficient analyzer that keeps only top-level
+directory totals and never builds the full tree. DS always builds the full tree.
+
+Confirmed on a 24-file tree:
+
+| Command | Root total | Files listed |
+| --- | --- | --- |
+| `gdu -np` | *absent* | 8 of 24 |
+| `gdu -np --depth 1` | 56048 bytes | 24 |
+| `ds` | 56013 bytes | 24 |
+
+So `gdu -np` on its own omits the root total and most of the tree, and timing it
+against DS would compare less work against more. The harness therefore runs
+`gdu -npa --depth 1 --no-prefix`:
+
+- `--depth 1` forces the full tree, making it work-equivalent to DS
+- `-a` selects apparent size, because DS reports logical file size and gdu's
+  default is on-disk size, which differ substantially over a large tree
+- `--no-prefix` emits raw bytes instead of `54.7 KiB`, so totals can be parsed
+
+A second entry, `gdu-toponly`, runs plain `gdu -np` deliberately, to document
+that difference. Its totals fail to parse, because the root row is missing, and
+the harness reports the run as **not a valid comparison** rather than presenting
+the time as a result. That is intended: if a future gdu release changes this
+behaviour, the warning disappears and the discrepancy has genuinely closed.
 
 ## Adding a tool
 
