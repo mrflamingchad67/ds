@@ -143,18 +143,23 @@ jobs:
           sed -i 's/^          //' NOTES.md
           cat NOTES.md
 
-      - name: Create or update the release
+- name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" assets/* --clobber
-            gh release edit "$TAG" --notes-file NOTES.md
+          # This job does not check out the repository, so gh cannot infer the
+          # target from a git remote and fails with "not a git repository".
+          # Naming the repo explicitly is the fix.
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber --repo "$REPO"
+            gh release edit "$TAG" --notes-file NOTES.md --repo "$REPO"
           else
             gh release create "$TAG" \
               --title "$TAG" \
               --notes-file NOTES.md \
               --verify-tag \
+              --repo "$REPO" \
               assets/*
           fi
