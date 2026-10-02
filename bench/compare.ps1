@@ -235,13 +235,15 @@ function Read-ToolOutput {
                     if ($header[$i] -match 'Directory') { $dirIdx = $i }
                 }
 
-                if ($sizeIdx -ge 0 -and $filesIdx -ge 0 -and $dirIdx -ge 0) {
-                    $wanted = $Target.TrimEnd('\')
+if ($sizeIdx -ge 0 -and $filesIdx -ge 0 -and $dirIdx -ge 0) {
+                    # Normalise both sides: a target of "C:\" must still match
+                    # diskusage's own "C:\" rather than being trimmed to "C:".
+                    $wanted = $TargetPath.TrimEnd('\')
                     foreach ($line in $lines[1..($lines.Count - 1)]) {
                         $cols = $line -split ','
                         if ($cols.Count -le $dirIdx) { continue }
                         $path = $cols[$dirIdx].Trim('"')
-                        if ($path -eq $wanted) {
+                        if ($path.TrimEnd('\') -eq $wanted) {
                             $sizeVal = 0.0
                             $fileVal = 0.0
                             if ([double]::TryParse(($cols[$sizeIdx]).Trim('"'), [ref]$sizeVal) -and
@@ -261,11 +263,15 @@ function Read-ToolOutput {
             # directory. The row for the scanned root carries the recursive total.
             # gdu prints no file count in non-interactive mode, so Files stays 0
             # and the agreement check falls back to comparing byte totals.
+            #
+            # Both sides of the path comparison are normalised. Trimming only the
+            # target turns "C:\" into "C:", which never matches gdu's own "C:\"
+            # output, and a drive root then silently fails to parse.
             $lines = @($Text -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
             $wanted = $TargetPath.TrimEnd('\')
             foreach ($line in $lines) {
                 if ($line -match '^\s*(?<size>\d+)\s+(?<path>.+?)\s*$') {
-                    if ($Matches['path'].Trim() -eq $wanted) {
+                    if ($Matches['path'].Trim().TrimEnd('\') -eq $wanted) {
                         $result.Bytes = [int64]$Matches['size']
                         $result.Recognised = $true
                         break
@@ -279,7 +285,7 @@ function Read-ToolOutput {
             $wanted = $TargetPath.TrimEnd('\')
             foreach ($line in $lines) {
                 if ($line -match '^\s*(?<size>\d+)\s+(?<path>.+?)\s*$') {
-                    if ($Matches['path'].Trim() -eq $wanted) {
+                    if ($Matches['path'].Trim().TrimEnd('\') -eq $wanted) {
                         $result.Bytes = [int64]$Matches['size']
                         $result.Recognised = $true
                         break
