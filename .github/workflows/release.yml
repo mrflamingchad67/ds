@@ -122,6 +122,16 @@ jobs:
           One binary per platform, no runtime dependencies, and a SHA256 file
           alongside every archive. See the README for flags and behavior notes.
 
+          ### Install
+
+          ```powershell
+          winget install mrflamingchad67.ds
+          ```
+
+          ```sh
+          cargo install disk-spacer
+          ```
+
           ### Verify a download
 
           ```sh
@@ -132,12 +142,6 @@ jobs:
 
           ```powershell
           Get-FileHash ds-x86_64-pc-windows-msvc.zip -Algorithm SHA256
-          ```
-
-          ### Install with cargo
-
-          ```sh
-          cargo install --git https://github.com/mrflamingchad67/ds
           ```
           EOF
           sed -i 's/^          //' NOTES.md

@@ -15,6 +15,20 @@ show **what is actually using the space**.
 
 ## Install
 
+### With winget (Windows)
+
+```powershell
+winget install mrflamingchad67.ds
+```
+
+### With cargo
+
+```sh
+cargo install disk-spacer
+```
+
+This builds from source and needs a Rust toolchain.
+
 ### Download a binary
 
 Grab an archive for your platform from [Releases](https://github.com/mrflamingchad67/ds/releases).
@@ -45,11 +59,11 @@ ds --plain --ascii C:
 ### With cargo
 
 ```sh
-cargo install --git https://github.com/mrflamingchad67/ds
+cargo install disk-spacer
 ```
 
-This builds from source and needs a Rust toolchain. The binary is not on
-crates.io, so `--git` is required rather than just `cargo install ds`.
+This builds from source and needs a Rust toolchain. The installed executable is
+named `ds`, not `disk-spacer`.
 
 ### From source
 

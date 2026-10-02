@@ -1,0 +1,28 @@
+PackageIdentifier: mrflamingchad67.ds
+PackageVersion: 0.1.0
+InstallerType: zip
+NestedInstallerType: portable
+Locale: en-US
+Publisher: mrflamingchad67
+PublisherUrl: https://github.com/mrflamingchad67
+PublisherSupportUrl: https://github.com/mrflamingchad67/ds/issues
+PackageName: ds
+ShortDescription: Disk analyzer that shows what is using your space
+Description: |-
+  DS reports volume capacity from the platform API and separately walks the
+  filesystem to show what is actually using the space.
+
+  It never shells out to du, fsutil, wmic, or any other disk analyzer, and it
+  never reads file contents.
+
+  A single-threaded recursive scan with 16 workers by default. Works on
+  Windows, Linux, and macOS.
+ReleaseNotesUrl: https://github.com/mrflamingchad67/ds/releases/tag/v0.1.0
+Tags:
+  - disk
+  - disk-space
+  - disk-usage
+  - storage
+  - analyzer
+ManifestType: installer
+ManifestVersion: 1.6.0

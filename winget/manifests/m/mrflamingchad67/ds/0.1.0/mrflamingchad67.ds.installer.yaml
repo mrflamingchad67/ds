@@ -1,0 +1,19 @@
+# Created with YamlCreate.ps1 v2.4.2
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.invalid.manifest-version-1.6.0.schema.json
+
+PackageIdentifier: mrflamingchad67.ds
+PackageVersion: 0.1.0
+DefaultLocale: en-US
+InstallerType: zip
+NestedInstallerType: portable
+InstallerUrl: https://github.com/mrflamingchad67/ds/releases/download/v0.1.0/ds-x86_64-pc-windows-msvc.zip
+InstallerSha256: 47b5f0150e3c770269e37534f36394eda718e9f7277a838fb543b4ff30143b4c
+ManifestType: installer
+ManifestVersion: 1.6.0
+License: MIT
+Publisher: mrflamingchad67
+PublisherUrl: https://github.com/mrflamingchad67
+PackageName: ds
+InstallerSwitches:
+  PortableCommandAlias: ds
+ReleaseNotesUrl: https://github.com/mrflamingchad67/ds/releases/tag/v0.1.0
