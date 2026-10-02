@@ -55,18 +55,39 @@ verify itself**.
 1. **No truncation.** Tools run via `Start-Process -Wait` with output
    redirected to files. There is no pipeline for a filter to cut short, and the
    stopwatch wraps the whole process.
-2. **Self-test before results.** A slow helper command is timed directly and
+2. **Self-test before results.** A streaming helper command is timed directly and
    then through the harness. If the two disagree by more than 30%, the run is
    aborted with a non-zero exit code. A harness that cannot prove its own
    correctness is just another way to get wrong numbers.
-3. **Totals must agree.** Every tool's file and byte counts are captured and
+3. **The machine settles first.** The self-test deliberately burns about 12 s of
+   CPU. Timing a scan immediately afterwards measures the aftermath of that load
+   rather than the scanner, so the harness waits before the first run. This was
+   not hypothetical: the first DS versus gdu comparison was ruined this way, with
+   DS reading 10.5 s in the loaded window and 6.4 s once settled, on the same
+   binary and the same tree.
+4. **Busy machines are flagged.** System CPU load is sampled before anything is
+   timed. Above 25% a warning is printed, because a scan time measured on a busy
+   machine is mostly a measurement of the other work.
+5. **Totals must agree.** Every tool's file and byte counts are captured and
    compared. If two tools report different file counts for the same tree, the
    timings are reported but explicitly marked as **not a speed comparison**,
-   because a different file count means a different workload.
-4. **One benchmark at a time.** The harness refuses to start if `ds`,
+   because a different file count means a different workload. When fewer than two
+   tools report a file count, byte totals are compared instead, with the
+   accounting differences explained.
+6. **One benchmark at a time.** The harness refuses to start if `ds`,
    `diskusage`, `du64`, `gdu`, `dust`, or `dua` is already running.
-5. **Minimum repetitions.** Default is one warm-up plus one measured pass.
+7. **Minimum repetitions.** Default is one warm-up plus one measured pass.
    Raise `-Reps` only when a result genuinely needs confirmation.
+
+## A moving target
+
+C: is not a fixed workload. The tree changed by roughly 100,000 files during
+this work, mostly a Microsoft Store app update that left `WindowsApps.tmp`
+behind, taking `Program Files` from 65,825 files to 157,774.
+
+Comparisons are only meaningful within a short window. Record the file count
+alongside the time, and treat a comparison taken days apart as two different
+measurements.
 
 ## Why the default is one repetition
 

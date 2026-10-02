@@ -56,7 +56,8 @@ param(
     [int]$Reps = 1,
     [bool]$Warmup = $true,
     [string[]]$Tools = @('ds', 'diskusage'),
-    [string]$OutputDir = (Join-Path $env:TEMP ("ds-bench-" + [guid]::NewGuid().ToString('N').Substring(0, 8)))
+    [string]$OutputDir = (Join-Path $env:TEMP ("ds-bench-" + [guid]::NewGuid().ToString('N').Substring(0, 8))),
+    [int]$SettleSeconds = 8
 )
 
 $ErrorActionPreference = 'Stop'
@@ -421,6 +422,30 @@ if ($busy) {
     exit 2
 }
 
+Write-Host "=== pre-flight ===" -ForegroundColor Cyan
+Write-Host ''
+
+# Sample CPU for a couple of seconds. A busy machine cannot give a meaningful
+# scan time, and silently benchmarking anyway is how a noisy result becomes a
+# published number.
+$cpuAvg = 0.0
+try {
+    $samples = (Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 2).CounterSamples
+    $cpuAvg = ($samples | Measure-Object CookedValue -Average).Average
+}
+catch {
+    Write-Host '  CPU sampling unavailable, continuing without the load check.' -ForegroundColor DarkGray
+}
+
+Write-Host ("  system CPU load: {0:N1}%" -f $cpuAvg)
+if ($cpuAvg -gt 25) {
+    Write-Host ''
+    Write-Host '  WARNING: the machine is not idle. Timings taken now will be' -ForegroundColor Yellow
+    Write-Host '  dominated by other work. Close other applications, or wait, and' -ForegroundColor Yellow
+    Write-Host '  re-run. Continuing anyway because results are wanted now.' -ForegroundColor Yellow
+}
+
+Write-Host ''
 $selftestOk = Invoke-Selftest
 Write-Host ''
 if (-not $selftestOk) {
@@ -432,6 +457,19 @@ if (-not $selftestOk) {
 # objects from a PowerShell function kept arriving at the call site as a single
 # stringified value, which then failed under StrictMode. A flat literal built
 # here has no such round trip.
+# Let the machine go quiet before anything is timed.
+#
+# The self-test above deliberately burns about 12 s of CPU across several
+# PowerShell processes. Timing a scan immediately afterwards measures the
+# aftermath of that load, not the scanner. The first DS vs gdu comparison was
+# ruined this way: DS read 10.5 s in that window and 6.4 s once the system
+# settled, on the same binary and the same tree.
+Write-Host ''
+if ($SettleSeconds -gt 0) {
+    Write-Host ("  settling for {0}s before any measurement..." -f $SettleSeconds)
+    Start-Sleep -Seconds $SettleSeconds
+}
+
 $registry = @(
     @{ Name = 'ds';              Exe = 'ds';               Args = @($Target, '--plain', '--ascii', '--threads', '16') }
     @{ Name = 'diskusage';       Exe = 'diskusage';        Args = @('/c', $Target) }
