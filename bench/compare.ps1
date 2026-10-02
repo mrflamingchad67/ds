@@ -154,7 +154,7 @@ function Measure-Tool {
     $stdout = if (Test-Path -LiteralPath $outFile) { Get-Content -LiteralPath $outFile -Raw } else { '' }
     $stderr = if (Test-Path -LiteralPath $errFile) { Get-Content -LiteralPath $errFile -Raw } else { '' }
 
-    $parsed = Read-ToolOutput -Name $Name -Text $stdout
+    $parsed = Read-ToolOutput -Name $Name -Text $stdout -TargetPath $Target
 
     [pscustomobject]@{
         Tool       = $Name
@@ -189,7 +189,8 @@ function Measure-Tool {
 function Read-ToolOutput {
     param(
         [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [string]$TargetPath = ''
     )
 
     $result = [pscustomobject]@{ Bytes = 0; Files = 0; Dirs = 0; Recognised = $false }
@@ -212,35 +213,46 @@ function Read-ToolOutput {
             }
         }
         'diskusage' {
-            # CSV with a header whose column names vary between Windows builds, so
-            # columns are located by name rather than position.
+            # Verified output shape:
+            #   header: SizeOnDisk,Files,Directory path
+            #   one row per directory, ending with a row for the scanned root
+            #   final row: "<total>,<total>,NN.N% of disk in use"  <- volume
+            #             summary, NOT part of the tree, so it must be excluded.
+            #
+            # Columns are located by header name because they vary by Windows
+            # build. The row for the scanned root is matched by path rather than
+            # taken as the last line, since the volume summary always follows it.
             $lines = @($Text -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
             if ($lines.Count -ge 2) {
                 $header = $lines[0] -split ','
                 $sizeIdx = -1
-                $onDiskIdx = -1
+                $filesIdx = -1
+                $dirIdx = -1
                 for ($i = 0; $i -lt $header.Count; $i++) {
-                    if ($header[$i] -match 'FileSize') { $sizeIdx = $i }
-                    if ($header[$i] -match 'SizeOnDisk') { $onDiskIdx = $i }
+                    if ($header[$i] -match 'SizeOnDisk') { $sizeIdx = $i }
+                    if ($header[$i] -match '^Files$') { $filesIdx = $i }
+                    if ($header[$i] -match 'Directory') { $dirIdx = $i }
                 }
-                $last = $lines[$lines.Count - 1] -split ','
-                $picked = 0
-                if ($onDiskIdx -ge 0 -and $last.Count -gt $onDiskIdx) {
-                    $parsed = 0.0
-                    if ([double]::TryParse(($last[$onDiskIdx]).Trim('"'), [ref]$parsed)) {
-                        $result.Bytes = [int64]$parsed
-                        $picked = 1
+
+                if ($sizeIdx -ge 0 -and $filesIdx -ge 0 -and $dirIdx -ge 0) {
+                    $wanted = $Target.TrimEnd('\')
+                    foreach ($line in $lines[1..($lines.Count - 1)]) {
+                        $cols = $line -split ','
+                        if ($cols.Count -le $dirIdx) { continue }
+                        $path = $cols[$dirIdx].Trim('"')
+                        if ($path -eq $wanted) {
+                            $sizeVal = 0.0
+                            $fileVal = 0.0
+                            if ([double]::TryParse(($cols[$sizeIdx]).Trim('"'), [ref]$sizeVal) -and
+                                [double]::TryParse(($cols[$filesIdx]).Trim('"'), [ref]$fileVal)) {
+                                $result.Bytes = [int64]$sizeVal
+                                $result.Files = [int64]$fileVal
+                                $result.Recognised = $true
+                            }
+                            break
+                        }
                     }
                 }
-                if ($sizeIdx -ge 0 -and $last.Count -gt $sizeIdx) {
-                    $parsed = 0.0
-                    if ([double]::TryParse(($last[$sizeIdx]).Trim('"'), [ref]$parsed)) {
-                        # Prefer SizeOnDisk when both are present, since that is
-                        # what actually occupies the volume.
-                        if ($picked -eq 0) { $result.Bytes = [int64]$parsed }
-                    }
-                }
-                $result.Recognised = $picked -eq 1
             }
         }
         'gdu' {
